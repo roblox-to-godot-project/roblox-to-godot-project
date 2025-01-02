@@ -3,6 +3,7 @@ name = "roblox-to-godot-project"
 version = "0.0.1-indev"
 edition = "2021"
 authors = ["Radiant"]
+license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib"]
@@ -11,6 +12,7 @@ crate-type = ["cdylib"]
 godot = { version = "0.2.1", features = ["register-docs"] }
 #mlua = { version = "0.10.2", features = ["luau", "luau-jit"] }
 mlua = { git = "https://github.com/RadiantUwU/mlua.git", branch = "edits", features = ["luau", "luau-jit", "macros"] }
+rustversion = "1.0.19"
 
 #[patch.'https://github.com/RadiantUwU/mlua.git']
 #mlua = { path = "/home/radiant/CodeProjs/Rust/mlua" }
