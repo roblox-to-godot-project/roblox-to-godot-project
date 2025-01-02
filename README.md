@@ -1,3 +1,6 @@
+> [!WARNING]
+> This project is still heavily in development and as such you will see very frequent changes in the codebase and crashes from unimplemented features.
+
 
 # The Roblox To Godot Project
 
