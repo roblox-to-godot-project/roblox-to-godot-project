@@ -25,7 +25,7 @@ Compiling
 - Clone the repo
 - Install rust nightly
 - Run `cargo build`
-- [A test project is included in the repo](https://github.com/roblox-to-godot-project/roblox-to-godot-project/tree/master/demo)
+- [A test project is included in the repo](https://github.com/roblox-to-godot-project/roblox-to-godot-project/tree/master/godot)
 
 **Special thanks**
 ------
