@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::ptr::NonNull;
 
-use crate::core::{InheritanceBase, ITrc, IWeak};
+use crate::core::alloc::Allocator;
+use crate::core::lua_macros::lua_getter;
+use crate::core::{ITrc, ITrcHead, IWeak};
 use crate::userdata::{ManagedRBXScriptSignal, RBXScriptSignal};
 use mlua::prelude::*;
 
@@ -10,79 +14,23 @@ pub type ManagedInstance = ITrc<dyn IInstance>;
 pub type WeakManagedInstance = IWeak<dyn IInstance>;
 pub type EventsTable = HashMap<String, ManagedRBXScriptSignal>;
 
-macro_rules! lua_getter {
-    ($lua: ident, $prop: expr) => {
-        IntoLua::into_lua($prop, $lua)
-    };
-    (string, $lua: ident, $prop: expr) => {
-        IntoLua::into_lua($prop.as_str(), $lua)
-    };
-    (clone, $lua: ident, $prop: expr) => {
-        IntoLua::into_lua($prop.clone(), $lua)
-    };
-    (opt_clone, $lua: ident, $prop: expr) => {
-        IntoLua::into_lua($prop.as_ref(), $lua)
-    };
-    (weak_clone, $lua: ident, $prop: expr) => {
-        IntoLua::into_lua($prop.upgrade(), $lua)
-    };
-    (opt_weak_clone, $lua: ident, $prop: expr) => {
-        IntoLua::into_lua($prop.as_ref().map(|x| x.upgrade()).flatten(), $lua)
-    };
-}
-macro_rules! lua_setter {
-    ($lua: ident, $prop: expr, $value: ident) => {
-        todo!()
-    };
+pub trait IInstanceComponent: Sized {
+    unsafe fn weak_to_strong_instance(ptr: WeakManagedInstance) -> ManagedInstance {
+        ptr.upgrade().unwrap_unchecked()
+    }
+    fn lua_get(&self, ptr: WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>>;
+    fn lua_set(&mut self, ptr: WeakManagedInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>>;
+    fn clone(&self, new_ptr: WeakManagedInstance) -> LuaResult<Self>;
+    fn new(ptr: WeakManagedInstance, class_name: &'static str) -> Self;
 }
 
-pub trait IInstance: InheritanceBase {
+pub trait IInstance: IObject {
     fn get_instance_component(&self) -> &InstanceComponent;
     fn get_instance_component_mut(&mut self) -> &mut InstanceComponent;
     
-    fn lua_get(&self, lua: &Lua, name: String) -> LuaResult<LuaValue>;
     fn lua_set(&mut self, lua: &Lua, name: String, val: LuaValue) -> LuaResult<()>;
 
     fn clone_instance(&self) -> LuaResult<ManagedInstance>;
-    
-    fn get_property_changed_signal(&self, property: String) -> RBXScriptSignal {
-        todo!()
-    }
-    fn get_changed_signal(&self) -> RBXScriptSignal {
-        todo!()
-    }
-    fn is_a(&self, class_name: String) -> bool {
-        match class_name.as_str() {
-            "Instance" |
-            "Object" => true,
-            _ => false
-        }
-    }
-}
-
-impl IObject for dyn IInstance {
-    fn is_a(&self, class_name: String) -> bool {
-        match class_name.as_str() {
-            "Object" => true,
-            _ => false
-        }
-    }
-    
-    fn lua_get(&self, lua: &Lua, name: String) -> LuaResult<LuaValue> {
-        IInstance::lua_get(self, lua, name)
-    }
-    
-    fn get_class_name(&self) -> &'static str {
-        self.get_instance_component().class_name
-    }
-    
-    fn get_property_changed_signal(&self, property: String) -> RBXScriptSignal {
-        IInstance::get_property_changed_signal(self, property)
-    }
-    
-    fn get_changed_signal(&self) -> RBXScriptSignal {
-        IInstance::get_changed_signal(self)
-    }
 }
 
 impl dyn IInstance {
@@ -123,7 +71,7 @@ impl dyn IInstance {
         Ok(())
     }
 
-    pub fn get_class_name(&self) -> &'static str { self.get_instance_component().class_name }
+    //pub fn get_class_name(&self) -> &'static str { self.get_instance_component().class_name }
     pub fn get_uniqueid(&self) -> usize {
         self.get_instance_component().unique_id
     }
@@ -207,12 +155,6 @@ impl dyn IInstance {
     pub async fn wait_for_child(&self, name: String, timeout: LuaNumber) -> LuaResult<ManagedInstance> {
         todo!()
     }
-    pub fn get_events_mut(&mut self) -> &mut EventsTable {
-        &mut self.get_instance_component_mut().events
-    }
-    pub fn get_events(&self) -> &EventsTable {
-        &self.get_instance_component().events
-    }
     pub fn find_first_ancestor(&self, name: String) -> LuaResult<Option<ManagedInstance>> {
         todo!()
     }
@@ -269,10 +211,16 @@ impl dyn IInstance {
     }
 
 }
+
+impl Debug for dyn IInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{:x}", &raw const *self as *const u8 as usize))
+    }
+}
+
+#[derive(Debug)]
 pub struct InstanceComponent {
-    pub events: EventsTable,
     archivable: bool,
-    class_name: &'static str,
     name: String,
     parent: Option<WeakManagedInstance>,
     _ptr: Option<WeakManagedInstance>,
@@ -280,7 +228,18 @@ pub struct InstanceComponent {
     children: Vec<ManagedInstance>,
     children_cache: HashMap<String, WeakManagedInstance>,
     children_cache_dirty: bool,
-    parent_locked: bool
+    parent_locked: bool,
+
+    pub ancestry_changed: ManagedRBXScriptSignal,
+    pub attribute_changed: ManagedRBXScriptSignal,
+    pub child_added: ManagedRBXScriptSignal,
+    pub child_removed: ManagedRBXScriptSignal,
+    pub descendant_added: ManagedRBXScriptSignal,
+    pub descendant_removing: ManagedRBXScriptSignal,
+    pub destroying: ManagedRBXScriptSignal,
+
+    pub attribute_changed_table: EventsTable,
+    pub property_changed_table: EventsTable
 }
 
 impl PartialEq for dyn IInstance {
@@ -289,6 +248,79 @@ impl PartialEq for dyn IInstance {
     }
 }
 impl Eq for dyn IInstance {}
+
+impl IInstanceComponent for InstanceComponent {
+    fn lua_get(&self, _ptr: WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
+        Some(InstanceComponent::lua_get(self, lua, key))
+    }
+
+    fn lua_set(&mut self, _ptr: WeakManagedInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
+        Some(InstanceComponent::lua_set(self, lua, key, value))
+    }
+
+    fn new(ptr: WeakManagedInstance, class_name: &'static str) -> Self {
+        let mut inst = InstanceComponent {
+            parent: None,
+            name: String::from(class_name),
+            archivable: true,
+            unique_id: usize::default(), //uninitialized,
+            _ptr: Some(ptr),
+            parent_locked: false,
+            children: Vec::new(),
+            children_cache: HashMap::new(),
+            children_cache_dirty: false,
+
+            ancestry_changed: ManagedRBXScriptSignal::default(),
+            attribute_changed: ManagedRBXScriptSignal::default(),
+            child_added: ManagedRBXScriptSignal::default(),
+            child_removed: ManagedRBXScriptSignal::default(),
+            descendant_added: ManagedRBXScriptSignal::default(),
+            descendant_removing: ManagedRBXScriptSignal::default(),
+            destroying: ManagedRBXScriptSignal::default(),
+            
+            attribute_changed_table: EventsTable::default(),
+            property_changed_table: EventsTable::default()
+        };
+        inst
+    }
+    fn clone(&self, ptr: WeakManagedInstance) -> LuaResult<Self> {
+        let mut new_children = Vec::new();
+        for i in self.children.iter() {
+            let read = i.read();
+            if read.is_err() {
+                return Err(LuaError::RuntimeError("failed to acquire read lock on a child".into()));
+            }
+            let read = unsafe { read.unwrap_unchecked() };
+            let inst = read.clone_instance();
+            if inst.is_ok() {
+                new_children.push(unsafe { inst.unwrap_unchecked() });
+            }
+        }
+        Ok(InstanceComponent {
+            archivable: self.archivable,
+            name: self.name.clone(),
+            parent: None,
+            unique_id: 0,
+            children: new_children,
+            children_cache: HashMap::default(),
+            children_cache_dirty: true,
+            _ptr: Some(ptr),
+            parent_locked: false,
+
+            ancestry_changed: ManagedRBXScriptSignal::default(),
+            attribute_changed: ManagedRBXScriptSignal::default(),
+            child_added: ManagedRBXScriptSignal::default(),
+            child_removed: ManagedRBXScriptSignal::default(),
+            descendant_added: ManagedRBXScriptSignal::default(),
+            descendant_removing: ManagedRBXScriptSignal::default(),
+            destroying: ManagedRBXScriptSignal::default(),
+            
+            attribute_changed_table: EventsTable::default(),
+            property_changed_table: EventsTable::default()
+        })
+    }
+
+}
 
 impl InstanceComponent {
     pub fn get_instance_pointer(&self) -> ManagedInstance {
@@ -299,47 +331,15 @@ impl InstanceComponent {
     pub fn get_weak_instance_pointer(&self) -> WeakManagedInstance {
         unsafe { self._ptr.as_ref().unwrap_unchecked().clone() }
     }
-    pub fn new(ptr: WeakManagedInstance, class_name: &'static str) -> InstanceComponent {
-        let mut inst = InstanceComponent {
-            parent: None,
-            name: String::from(class_name),
-            archivable: true,
-            unique_id: usize::default(), //uninitialized,
-            events: EventsTable::default(), //uninit
-            class_name: class_name,
-            _ptr: Some(ptr),
-            parent_locked: false,
-            children: Vec::new(),
-            children_cache: HashMap::new(),
-            children_cache_dirty: false
-        };
-        inst.events.insert("AncestryChanged".into(),
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst.events.insert("AttributeChanged".into(),
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst.events.insert("ChildAdded".into(), 
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst.events.insert("ChildRemoved".into(), 
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst.events.insert("DescendantAdded".into(), 
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst.events.insert("DescendantRemoving".into(), 
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst.events.insert("Destroying".into(), 
-            ManagedRBXScriptSignal::new(RBXScriptSignal::default())
-        );
-        inst
-    }
     pub fn lua_get(&self, lua: &Lua, key: &String) -> LuaResult<LuaValue> {
         match key.as_str() {
             "Archivable" => lua_getter!(lua, self.archivable),
-            "ClassName" => lua_getter!(lua, self.class_name),
+            "ClassName" => IntoLua::into_lua(unsafe { 
+                self._ptr.as_ref().unwrap_unchecked()
+                    .upgrade().unwrap_unchecked().access()
+                    .as_ref().unwrap_unchecked()
+                    .get_class_name()
+                }, lua),
             "Name" => lua_getter!(string, lua, self.name),
             "Parent" => lua_getter!(opt_weak_clone, lua, self.parent),
 
@@ -364,5 +364,14 @@ impl InstanceComponent {
             },
             _ => Err(LuaError::RuntimeError(format!("invalid property to set, {}",key.as_str())))
         }
+    }
+}
+
+impl<T: IInstance, A: Allocator + Clone + Send + Sync> IWeak<T, A> {
+    pub fn cast_to_instance(&self) -> IWeak<dyn IInstance, A> {
+        let (header_raw, p_raw, alloc) = self.clone().into_inner_with_allocator();
+        let p = p_raw as *mut dyn IInstance;
+        let header = unsafe { NonNull::new_unchecked(header_raw.as_ptr() as *mut ITrcHead<dyn IInstance>) };
+        IWeak::from_inner_with_allocator((header, p, alloc))
     }
 }

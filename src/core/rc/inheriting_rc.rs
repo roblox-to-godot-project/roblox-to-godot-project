@@ -8,11 +8,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::TryLockError as RwTryLockError;
 
+use crate::core::{fat_to_metadata, inheritance_cast_to_mut, inheritance_is_of_type, thin_to_fat_mut, PtrMetadata};
 use crate::core::{alloc::{Allocator, Global}, null_mut, InheritanceBase};
+use crate::godot_debug;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct PoisonError;
-pub type LockResult<T: ?Sized> = Result<T, PoisonError>;
-pub type TryLockResult<T: ?Sized> = Result<T, TryLockError>;
+pub type LockResult<T> = Result<T, PoisonError>;
+pub type TryLockResult<T> = Result<T, TryLockError>;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TryLockError {
     Poisoned,
@@ -24,7 +26,7 @@ fn create_layout_for_header(layout: Layout) -> Layout {
 }
 
 #[repr(C)]
-struct ITrcHead<T: ?Sized> {
+pub struct ITrcHead<T: ?Sized> {
     layout: Layout, // represents T's size
     destroy: unsafe fn(*mut u8) -> (),
     strong: AtomicU32,
@@ -41,7 +43,7 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
             ptr.write(ITrcHead::<T> {
                 layout: Layout::new::<T>(),
                 destroy: |data| {
-                    let t: *mut T = data.cast();
+                    let t: *mut T = data as *mut T;
                     t.drop_in_place();
                 },
                 strong: AtomicU32::new(1),
@@ -65,7 +67,7 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
             ptr.write(ITrcHead::<T> {
                 layout: Layout::new::<T>(),
                 destroy: |data| {
-                    let t: *mut T = data.cast();
+                    let t: *mut T = data as *mut T;
                     t.drop_in_place();
                 },
                 strong: AtomicU32::new(1),
@@ -93,8 +95,8 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
         unsafe {
             ptr.write(ITrcHead::<MaybeUninit<T>> {
                 layout: Layout::new::<T>(),
-                destroy: |data| unsafe {
-                    let t: *mut T = data.cast();
+                destroy: |data| {
+                    let t: *mut T = data as *mut T;
                     t.drop_in_place();
                 },
                 strong: AtomicU32::new(1),
@@ -113,6 +115,7 @@ impl<T: ?Sized> ITrcHead<T> {
         (self.destroy)((&raw mut self.data).cast())
     }
 }
+#[derive(Debug)]
 pub struct ITrc<T, A = Global>
 where
     T: ?Sized,
@@ -140,25 +143,81 @@ where
     }
     
     pub unsafe fn increment_strong_count(&self) {
-        if self.head.as_ref().strong.fetch_add(1, Ordering::Relaxed) == 0 {
+        if self.head.as_ref().strong.fetch_add(1, Ordering::Acquire) == 0 {
             self.head.as_ref().weak.fetch_add(1, Ordering::Relaxed);
         }
     }
-    pub unsafe fn decrement_strong_count(&self) {
-        if self.head.as_ref().strong.fetch_sub(1, Ordering::Relaxed) == 1 {
-            self.head.as_ref().weak.fetch_sub(1, Ordering::Relaxed);
+    pub unsafe fn decrement_strong_count(&self) -> (bool, bool) {
+        if self.head.as_ref().strong.fetch_sub(1, Ordering::Acquire) == 1 {
+            (true, self.head.as_ref().weak.fetch_sub(1, Ordering::Relaxed) == 1)
+        } else {
+            (false, false)
         }
+    }
+    unsafe fn increment_strong_count_if_exists(&self) -> bool {
+        self.head.as_ref().strong.fetch_update(Ordering::Release, Ordering::Relaxed, |x| {
+            if x == 0 {
+                None
+            } else {
+                Some(x+1)
+            }
+        }).is_ok()
     }
     pub unsafe fn increment_weak_count(&self) {
         self.head.as_ref().weak.fetch_add(1, Ordering::Relaxed);
     }
-    pub unsafe fn decrement_weak_count(&self) {
-        self.head.as_ref().weak.fetch_sub(1, Ordering::Relaxed);
+    pub unsafe fn decrement_weak_count(&self) -> bool {
+        self.head.as_ref().weak.fetch_sub(1, Ordering::Relaxed) == 1
     }
     pub fn strong_count(&self) -> u32 {
         unsafe { self.head.as_ref().strong.load(Ordering::Relaxed) }
     }
     pub fn weak_count(&self) -> u32 {
+        unsafe { self.head.as_ref().weak.load(Ordering::Relaxed) }
+    }
+}
+
+impl<T, A> IWeak<T, A>
+where
+    T: ?Sized,
+    A: Allocator + Send + Sync
+{
+    fn deconstruct(self) -> (NonNull<ITrcHead<T>>, *mut T, A) {
+        let t = ManuallyDrop::new(self);
+        (t.head, t.ptr, unsafe { (&raw const t.alloc).read() })
+    }
+    
+    unsafe fn increment_strong_count(&self) {
+        if self.head.as_ref().strong.fetch_add(1, Ordering::Acquire) == 0 {
+            self.head.as_ref().weak.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    unsafe fn decrement_strong_count(&self) -> (bool, bool) {
+        if self.head.as_ref().strong.fetch_sub(1, Ordering::Acquire) == 1 {
+            (true, self.head.as_ref().weak.fetch_sub(1, Ordering::Relaxed) == 1)
+        } else {
+            (false, false)
+        }
+    }
+    unsafe fn increment_strong_count_if_exists(&self) -> bool {
+        self.head.as_ref().strong.fetch_update(Ordering::Release, Ordering::Relaxed, |x| {
+            if x == 0 {
+                None
+            } else {
+                Some(x+1)
+            }
+        }).is_ok()
+    }
+    unsafe fn increment_weak_count(&self) {
+        self.head.as_ref().weak.fetch_add(1, Ordering::Relaxed);
+    }
+    unsafe fn decrement_weak_count(&self) -> bool {
+        self.head.as_ref().weak.fetch_sub(1, Ordering::Relaxed) == 1
+    }
+    fn strong_count(&self) -> u32 {
+        unsafe { self.head.as_ref().strong.load(Ordering::Relaxed) }
+    }
+    fn weak_count(&self) -> u32 {
         unsafe { self.head.as_ref().weak.load(Ordering::Relaxed) }
     }
 }
@@ -234,18 +293,20 @@ where
 
 impl<T, A> ITrc<T, A>
 where
-    T: InheritanceBase,
+    T: InheritanceBase + ?Sized + 'static,
     A: Allocator + Send + Sync
 {
-    pub fn cast<U: 'static>(self) -> Result<ITrc<U, A>, ITrc<T, A>> {
+    pub fn cast_unsized<U: 'static + ?Sized>(self) -> Result<ITrc<U, A>, ITrc<T, A>> {
         let (head, ptr, alloc) = self.deconstruct();
+        let p = head.as_ptr();
+        let metadata = unsafe { fat_to_metadata(p) }; 
         let base =  unsafe { head.as_ptr().as_mut().unwrap_unchecked().base.as_mut().unwrap_unchecked() };
-        let result = base.inherit_as_mut::<U>();
+        let result = inheritance_cast_to_mut!(base, U);
         if result.is_ok() {
             unsafe {
                 let new_ptr = &raw mut *result.unwrap_unchecked();
                 Ok(ITrc::<U, A> {
-                    head: head.cast(),
+                    head: NonNull::new_unchecked(thin_to_fat_mut(head.cast().as_ptr(), metadata)),
                     ptr: new_ptr,
                     alloc
                 })
@@ -258,9 +319,38 @@ where
             })
         }
     }
-    pub fn is<U: 'static>(&self) -> bool {
+    pub fn is<U: 'static + ?Sized>(&self) -> bool {
         let base =  unsafe { self.head.as_ref().base.as_ref().unwrap_unchecked() };
-        base.is::<U>()
+        inheritance_is_of_type!(base, U)
+    }
+}
+impl<T, A> ITrc<T, A>
+where
+    T: InheritanceBase + 'static,
+    A: Allocator + Send + Sync
+{
+    pub fn cast_sized<U: 'static + ?Sized>(self) -> Result<ITrc<U, A>, ITrc<T, A>> {
+        let (head, ptr, alloc) = self.deconstruct();
+        let p = head.as_ptr();
+        let metadata = unsafe { fat_to_metadata(p as *mut ITrcHead<dyn InheritanceBase>) }; 
+        let base =  unsafe { head.as_ptr().as_mut().unwrap_unchecked().base.as_mut().unwrap_unchecked() };
+        let result = inheritance_cast_to_mut!(base, U);
+        if result.is_ok() {
+            unsafe {
+                let new_ptr = &raw mut *result.unwrap_unchecked();
+                Ok(ITrc::<U, A> {
+                    head: NonNull::new_unchecked(thin_to_fat_mut(head.cast().as_ptr(), metadata)),
+                    ptr: new_ptr,
+                    alloc
+                })
+            }
+        } else {
+            Err(ITrc::<T, A> {
+                head,
+                ptr,
+                alloc
+            })
+        }
     }
 }
 
@@ -361,11 +451,12 @@ where
     A: Allocator + Send + Sync + Clone
 {
     pub fn downgrade(&self) -> IWeak<T, A> {
-        unsafe { self.head.as_ptr().as_mut().unwrap_unchecked().weak.fetch_add(1, Ordering::Relaxed) };
+        unsafe { self.increment_weak_count(); }
         IWeak { head: self.head, ptr: self.ptr, alloc: self.alloc.clone() }
     }
 }
 
+#[derive(Debug)]
 pub struct IWeak<T, A = Global>
 where
     T: ?Sized,
@@ -420,15 +511,19 @@ where
 {
     #[inline]
     fn drop(&mut self) {
-        let head = unsafe { self.head.as_mut() };
-        if head.strong.fetch_sub(1, Ordering::Relaxed) == 1 {
-            unsafe { head.drop_in_place() };
-            if head.weak.fetch_sub(1, Ordering::Relaxed) == 1 {
-                unsafe { self.alloc.deallocate(
+        let head = unsafe {
+            self.head.as_mut()
+        };
+        match unsafe {self.decrement_strong_count()}  {
+            (true, false) => unsafe { head.drop_in_place(); },
+            (true, true) => unsafe {
+                head.drop_in_place();
+                self.alloc.deallocate(
                     self.head.cast(),
                     create_layout_for_header(head.layout)
-                ) };
-            }
+                );
+            },
+            _ => ()
         }
     }
 }
@@ -477,7 +572,7 @@ where
     #[inline]
     fn drop(&mut self) {
         let head = unsafe { self.head.as_mut() };
-        if head.weak.fetch_sub(1, Ordering::Relaxed) == 1 {
+        if unsafe { self.decrement_weak_count() } {
             unsafe { self.alloc.deallocate(
                 self.head.cast(),
                 create_layout_for_header(head.layout)
@@ -492,7 +587,7 @@ where
     A: Allocator + Send + Sync + Clone
 {
     pub fn upgrade(&self) -> Option<ITrc<T, A>> {
-        if unsafe { self.head.as_ref().strong.load(Ordering::Relaxed) } != 0 {
+        if unsafe { self.increment_strong_count_if_exists() } {
             Some(ITrc::<T, A> {
                 head: self.head,
                 ptr: self.ptr,
@@ -503,7 +598,21 @@ where
         }
     }
     pub fn dead(&self) -> bool {
-        unsafe { self.head.as_ref().strong.load(Ordering::Relaxed) == 0 }
+        self.weak_count() == 0
+    }
+    pub fn into_inner_with_allocator(self) -> (NonNull<ITrcHead<T>>, *mut T, A) {
+        let m = ManuallyDrop::new(self);
+        let a = unsafe { (&raw const m.alloc).read() };
+        let p = m.ptr;
+        let head = m.head;
+        (head, p, a)
+    }
+    pub fn from_inner_with_allocator(tuple: (NonNull<ITrcHead<T>>, *mut T, A)) -> Self {
+        IWeak {
+            head: tuple.0,
+            ptr: tuple.1,
+            alloc: tuple.2
+        }
     }
 }
 
@@ -513,7 +622,7 @@ where
     A: Allocator + Send + Sync + Clone
 {
     fn clone(&self) -> Self {
-        unsafe { self.head.as_ref().strong.fetch_add(1, Ordering::Relaxed) };
+        unsafe { self.increment_strong_count(); }
         Self {
             head: self.head,
             ptr: self.ptr,
@@ -527,7 +636,7 @@ where
     A: Allocator + Send + Sync + Clone
 {
     fn clone(&self) -> Self {
-        unsafe { self.head.as_ref().weak.fetch_add(1, Ordering::Relaxed) };
+        unsafe { self.increment_weak_count(); }
         Self {
             head: self.head,
             ptr: self.ptr,

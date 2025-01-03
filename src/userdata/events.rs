@@ -5,10 +5,11 @@ use mlua::prelude::*;
 use crate::core::{LuauState, Trc, Weak};
 pub type ManagedRBXScriptSignal = Trc<RBXScriptSignal>;
 
+#[derive(Debug)]
 pub struct RBXScriptConnection {
 
 }
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct RBXScriptSignal {
     callbacks: HashMap<usize, (LuaFunction, *const RwLock<LuauState>)>
 }

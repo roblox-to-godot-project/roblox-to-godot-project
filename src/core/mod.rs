@@ -1,5 +1,5 @@
 pub mod alloc;
-mod trc;
+mod rc;
 mod security;
 mod state;
 mod scheduler;
@@ -8,11 +8,13 @@ mod inheritance;
 mod pointers;
 mod instance_repl_table;
 mod rw_lock;
+pub mod lua_macros;
 
 pub(self) use instance_repl_table::InstanceReplicationTable;
 pub use inheritance::*;
-pub use trc::*;
+pub use rc::*;
 pub use vm::RobloxVM;
+pub use rw_lock::*;
 pub use state::{LuauState, registry_keys};
 pub use security::*;
 pub(self) use pointers::*;

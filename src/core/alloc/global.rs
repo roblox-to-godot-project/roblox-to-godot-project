@@ -2,7 +2,7 @@ use std::{alloc::{alloc, alloc_zeroed, dealloc, realloc, GlobalAlloc, Layout}, p
 
 use super::{AllocError, Allocator};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug)]
 pub struct Global;
 
 unsafe impl GlobalAlloc for Global {

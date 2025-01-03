@@ -1,3 +1,4 @@
+use mlua::prelude::*;
 use super::{enums::RotationOrder, Vector3};
 
 
@@ -12,6 +13,8 @@ impl Default for CFrame {
         CFrame::IDENTITY
     }
 }
+
+from_lua_copy_impl!(CFrame);
 
 impl CFrame {
     pub const IDENTITY: CFrame = CFrame {
@@ -31,8 +34,8 @@ impl CFrame {
             pos: [pos.x, pos.y, pos.z]
         }
     }
-    pub fn new_looking_at(pos: Vector3, lookAt: Vector3) -> Self {
-        Self::look_at(pos, lookAt, None)
+    pub fn new_looking_at(pos: Vector3, look_at: Vector3) -> Self {
+        Self::look_at(pos, look_at, None)
     }
     pub const fn new_quaternion(pos: Vector3, q_x: f64, q_y: f64, q_z: f64, q_w: f64) -> Self {
         let d = q_x*q_x+q_y*q_y+q_z*q_z+q_w*q_w;
@@ -100,4 +103,13 @@ impl CFrame {
     }
     //todo!()
 
+}
+
+impl LuaUserData for CFrame {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
+        todo!()
+    }
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        todo!()
+    }
 }

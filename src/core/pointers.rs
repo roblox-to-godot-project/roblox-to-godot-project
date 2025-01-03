@@ -1,10 +1,25 @@
-use std::{alloc::Layout, mem::ManuallyDrop, ptr::{slice_from_raw_parts, slice_from_raw_parts_mut}};
+use std::mem::ManuallyDrop;
+use std::ptr::{from_raw_parts, from_raw_parts_mut, metadata};
 
-#[inline(always)]
-unsafe fn transmute_unchecked<A, B>(src: A) -> B {
-    debug_assert!(Layout::new::<A>() == Layout::new::<B>());
-    transmute_unchecked_unsized(src)
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
+pub struct PtrMetadata {
+    opaque: [usize; 1]
 }
+
+impl PtrMetadata {
+    pub const unsafe fn null() -> PtrMetadata {
+        PtrMetadata {
+            opaque: [0; 1]
+        }
+    }
+    pub const fn is_null(&self) -> bool {
+        self.opaque[0] == 0
+    }
+}
+
+#[rustversion::nightly]
+use core::intrinsics::transmute_unchecked;
+
 #[inline(always)]
 const unsafe fn transmute_unchecked_unsized<A, B>(src: A) -> B {
     #[repr(C)]
@@ -19,31 +34,48 @@ const unsafe fn transmute_unchecked_unsized<A, B>(src: A) -> B {
 }
 #[inline(always)]
 pub unsafe fn fat_to_thin<T: ?Sized>(ptr: *const T) -> *const u8 {
-    transmute_unchecked::<*const T, (*const u8, usize)>(ptr).0
+    ptr as *const u8
 }
 #[inline(always)]
 pub unsafe fn fat_to_thin_mut<T: ?Sized>(ptr: *mut T) -> *mut u8 {
-    transmute_unchecked::<*mut T, (*mut u8, usize)>(ptr).0
+    ptr as *mut u8
+}
+
+#[cfg(not(debug_assertions))]
+#[inline(always)]
+pub unsafe fn fat_to_metadata<T: ?Sized>(ptr: *const T) -> PtrMetadata {
+    transmute_unchecked_unsized(metadata(ptr))
+}
+#[cfg(debug_assertions)]
+#[inline(always)]
+pub unsafe fn fat_to_metadata<T: ?Sized>(ptr: *const T) -> PtrMetadata {
+    use std::alloc::Layout;
+
+    use crate::godot_debug;
+
+    let metadata_before = metadata(ptr);
+    if Layout::for_value(&metadata_before).size() == 0 {
+        godot_debug!("passed pointer is missing metadata");
+        panic!("passed pointer is missing metadata");
+    }
+    transmute_unchecked(metadata_before)
+}
+
+#[inline(always)]
+pub unsafe fn thin_to_fat<T: ?Sized>(ptr: *const u8, metadata: PtrMetadata) -> *const T {
+    let metadata = transmute_unchecked_unsized(metadata);
+    from_raw_parts(ptr, metadata)
 }
 #[inline(always)]
-pub unsafe fn thin_to_fat_trait<T: ?Sized>(ptr: *const u8, vtable: *const u8) -> *const T {
-    transmute_unchecked((ptr, vtable))
+pub unsafe fn thin_to_fat_mut<T: ?Sized>(ptr: *mut u8, metadata: PtrMetadata) -> *mut T {
+    let metadata = transmute_unchecked_unsized(metadata);
+    from_raw_parts_mut(ptr, metadata)
 }
 #[inline(always)]
-pub unsafe fn thin_to_fat<T: ?Sized>(ptr: *const u8, size: usize) -> *const T {
-    transmute_unchecked(slice_from_raw_parts(ptr, size))
-}
-#[inline(always)]
-pub unsafe fn thin_to_fat_trait_mut<T: ?Sized>(ptr: *mut u8, vtable: *mut u8) -> *mut T {
-    transmute_unchecked((ptr, vtable))
-}
-#[inline(always)]
-pub unsafe fn thin_to_fat_mut<T: ?Sized>(ptr: *mut u8, size: usize) -> *mut T {
-    transmute_unchecked(slice_from_raw_parts_mut(ptr, size))
-}
 pub const fn null<T: ?Sized>() -> *const T {
-    unsafe {transmute_unchecked_unsized((0usize, 0usize))}
+    unsafe {transmute_unchecked_unsized((0usize, 0usize, 0usize))}
 }
+#[inline(always)]
 pub const fn null_mut<T: ?Sized>() -> *mut T {
-    unsafe {transmute_unchecked_unsized((0usize, 0usize))}
+    unsafe {transmute_unchecked_unsized((0usize, 0usize, 0usize))}
 }

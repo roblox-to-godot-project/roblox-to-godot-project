@@ -1,6 +1,6 @@
 use mlua::prelude::*;
 
-use crate::instance::{ManagedInstance};
+use crate::{core::{lua_macros::lua_getter, ITrc, Trc}, instance::{IInstance, IObject, ManagedInstance, Model}};
 
 use super::LuaSingleton;
 
@@ -16,7 +16,10 @@ impl LuaUserData for ManagedInstance {
         });
         methods.add_meta_method("__tostring", |_, this: &ManagedInstance, ()| {
             let instance_read = this.read().expect("instance poisoned");
-            Ok(format!("{} {}: {}", instance_read.get_class_name(), instance_read.get_name(), instance_read.get_uniqueid()))
+            Ok(format!("{} {}: uid {}", 
+                <dyn IInstance>::get_class_name(&*instance_read), 
+                instance_read.get_name(), 
+                instance_read.get_uniqueid()))
         });
     }
 }
@@ -24,8 +27,9 @@ impl LuaUserData for ManagedInstance {
 impl LuaSingleton for ManagedInstance {
     fn register_singleton(lua: &Lua) -> LuaResult<()> {
         let table = lua.create_table()?;
-        table.raw_set("new", lua.create_function(|_, (class_name,): (String,)| {
+        table.raw_set("new", lua.create_function(|lua, (class_name,): (String,)| {
             match class_name.as_str() {
+                "Model" => lua_getter!(lua, Model::new()),
                 _ => Err::<LuaValue, LuaError>(LuaError::RuntimeError(format!("invalid class name \"{}\"", class_name)))
             }
         })?)?;
@@ -33,3 +37,28 @@ impl LuaSingleton for ManagedInstance {
         Ok(())
     }
 }
+
+impl FromLua for ManagedInstance {
+    fn from_lua(value:LuaValue,_lua: &Lua) -> LuaResult<Self>{
+        let ud = value.as_userdata();
+        if ud.is_none(){
+            Err(LuaError::FromLuaConversionError {
+                from:value.type_name(),to:stringify!(ManagedInstance).into(),message:None
+            })
+        }else {
+            let unwrapped = unsafe {
+                ud.unwrap_unchecked()
+            }.borrow::<ManagedInstance>();
+            if unwrapped.is_err(){
+                Err(LuaError::FromLuaConversionError {
+                    from:"userdata",to:stringify!(ManagedInstance).into(),message:None
+                })
+            }else {
+                unsafe {
+                    Ok(unwrapped.unwrap_unchecked().clone())
+                }
+            }
+        }
+    }
+
+    }

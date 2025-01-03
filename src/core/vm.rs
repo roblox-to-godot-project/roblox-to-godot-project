@@ -1,6 +1,7 @@
-use std::sync::RwLock;
+use std::{sync::RwLock, thread::panicking};
 use std::marker::PhantomPinned;
 
+use godot::global::godot_print_rich;
 use godot::{builtin::Variant, global::{godot_print, print_rich, printt}, meta::ToGodot};
 use mlua::prelude::*;
 
@@ -84,6 +85,9 @@ impl RobloxVM {
 
 impl Drop for RobloxVM {
     fn drop(&mut self) {
+        if panicking() {
+            godot_print_rich!("[color=red][b]ERROR: RobloxVM:[/b] Abnormal exit (panicking() == true)[/color]\n[color=gray]\tat RobloxVM::drop() ({}:{})[/color]", file!(), line!());
+        }
         self.states.clear();
         godot_print!("RobloxVM instance destroyed.");
     }
