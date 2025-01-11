@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{core::{inheritance_cast_to, lua_macros::lua_invalid_argument, InheritanceBase}, userdata::CFrame};
+use crate::{core::{inheritance_cast_to, lua_macros::lua_invalid_argument, RwLockReadGuard, RwLockWriteGuard}, userdata::CFrame};
 use mlua::prelude::*;
 
 use super::{instance::IInstanceComponent, IInstance, ManagedInstance, WeakManagedInstance};
@@ -16,11 +16,10 @@ impl PVInstanceComponent {
 }
 
 impl IInstanceComponent for PVInstanceComponent {
-    fn lua_get(&self, _ptr: WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
+    fn lua_get(self: &mut RwLockReadGuard<'_, PVInstanceComponent>, _ptr: WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
         match key.as_str() {
             "GetPivot" => Some(Ok(LuaValue::Function(lua.create_function(|_, this: ManagedInstance| {
-                let instance_read = this.read().unwrap();
-                let i = inheritance_cast_to!(&*instance_read, dyn IPVInstance);
+                let i = inheritance_cast_to!(&*this, dyn IPVInstance);
                 i
                     .map(|x| x.get_pivot())
                     .map_err(|_|
@@ -28,8 +27,7 @@ impl IInstanceComponent for PVInstanceComponent {
                     )
             }).unwrap()))),
             "PivotTo" => Some(Ok(LuaValue::Function(lua.create_function(|_, (this, cf): (ManagedInstance,CFrame)| {
-                let instance_read = this.read().unwrap();
-                let i = inheritance_cast_to!(&*instance_read, dyn IPVInstance);
+                let i = inheritance_cast_to!(&*this, dyn IPVInstance);
                 i
                     .map(|x| x.get_pivot())
                     .map_err(|_|
@@ -40,11 +38,11 @@ impl IInstanceComponent for PVInstanceComponent {
         }
     }
 
-    fn lua_set(&mut self, _ptr: WeakManagedInstance, _lua: &Lua, _key: &String, _value: &LuaValue) -> Option<LuaResult<()>> {
+    fn lua_set(self: &mut RwLockWriteGuard<'_, PVInstanceComponent>, _ptr: WeakManagedInstance, _lua: &Lua, _key: &String, _value: &LuaValue) -> Option<LuaResult<()>> {
         None
     }
 
-    fn clone(&self, _new_ptr: WeakManagedInstance) -> LuaResult<Self> {
+    fn clone(self: &RwLockReadGuard<'_, PVInstanceComponent>, _new_ptr: WeakManagedInstance) -> LuaResult<Self> {
         Ok(PVInstanceComponent {
             origin: self.origin,
             pivot_offset: self.pivot_offset
@@ -60,8 +58,8 @@ impl IInstanceComponent for PVInstanceComponent {
 }
 
 pub trait IPVInstance: IInstance {
-    fn get_pv_instance_component(&self) -> &PVInstanceComponent;
-    fn get_pv_instance_component_mut(&mut self) -> &mut PVInstanceComponent;
+    fn get_pv_instance_component(&self) -> RwLockReadGuard<'_, PVInstanceComponent>;
+    fn get_pv_instance_component_mut(&self) -> RwLockWriteGuard<'_, PVInstanceComponent>;
 }
 
 impl dyn IPVInstance {

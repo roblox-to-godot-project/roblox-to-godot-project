@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::mem::take;
 use std::sync::{RwLock, TryLockError};
 
-use crate::instance::{ManagedInstance, WeakManagedInstance};
+use crate::instance::{DynInstance, ManagedInstance, WeakManagedInstance};
 
 #[derive(Default)]
 pub(super) struct InstanceReplicationTable {
@@ -17,18 +17,18 @@ impl InstanceReplicationTable {
         })
     }
     pub fn add_instance(&self, instance: ManagedInstance) {
-        let mut instance_write = instance.write().unwrap();
-        if instance_write.get_uniqueid() == 0 {
-            instance_write.init_uniqueid().unwrap();
+        let mut instance_write = instance.get_instance_component_mut();
+        if DynInstance::guard_get_uniqueid(&instance_write) == 0 {
+            DynInstance::guard_init_uniqueid(&mut instance_write).unwrap();
         }
         self.main.try_write()
             .and_then(|mut guard| {
-                guard.insert(instance_write.get_uniqueid(), instance.downgrade());
+                guard.insert(DynInstance::guard_get_uniqueid(&instance_write), instance.downgrade());
                 Ok(())
             })
             .or_else(|error| {
                 if let TryLockError::WouldBlock = error {
-                    self.secondary.write().unwrap().insert(instance_write.get_uniqueid(), instance.downgrade());
+                    self.secondary.write().unwrap().insert(DynInstance::guard_get_uniqueid(&instance_write), instance.downgrade());
                     Ok(())
                 } else {
                     Err(())

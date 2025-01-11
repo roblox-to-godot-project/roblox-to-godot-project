@@ -2,6 +2,7 @@
 
 #![feature(trait_upcasting)]
 #![feature(ptr_metadata)]
+#![feature(arbitrary_self_types)]
 
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
@@ -54,22 +55,17 @@ unsafe impl ExtensionLibrary for RobloxToGodotProjectExtension {
                     let s = String::from(v.stringify());
                     s.starts_with("Godot")
                 }, "incompatible gdextension api header"); // Make sure the header won't randomly break at runtime.
-                godot_print!("Roblox To Godot Project v{} (rust runtime v{}) by {}\n", env!("CARGO_PKG_VERSION"), RUST_VERSION, {
+                godot_print!("Roblox To Godot Project v{} (Rust runtime v{}) by {}\n", env!("CARGO_PKG_VERSION"), RUST_VERSION, {
                     let authors: &'static str = env!("CARGO_PKG_AUTHORS");
                     authors.replace(":", ", ")
                 });
-                let mut roblox_vm = RobloxVM::new();
-                let env = roblox_vm.get_mut().unwrap().get_main_state().get_lua().globals();
-                roblox_vm.get_mut().unwrap()
+                let mut roblox_vm = RobloxVM::new(None);
+                let env = roblox_vm.get_mut().get_main_state().create_env_from_global().unwrap();
+                roblox_vm.get_mut()
                     .get_main_state()
-                    .compile_jit("meow?", r#"
-                        print("Hey there!", _VERSION, "running in Godot!")
-                        warn("uwu")
-                        print(Vector3int16.new(32768, 10, -11))
-                        print(Instance)
-                        print(Instance.new("Model"))
-                    "#, env).unwrap()
+                    .compile_jit("test.lua", include_str!("test.lua"), env).unwrap()
                     .call::<()>(()).unwrap();
+                
             }
             _ => ()
         }

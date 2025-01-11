@@ -26,15 +26,15 @@ macro_rules! from_lua_copy_impl {
 }
 macro_rules! from_lua_clone_impl {
     ($name: ident) => {
-        impl FromLua for $ident {
+        impl FromLua for $name {
             fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
                 let ud = value.as_userdata();
                 if ud.is_none() {
-                    Err(LuaError::FromLuaConversionError { from: value.type_name(), to: stringify!($ident).into(), message: None })
+                    Err(LuaError::FromLuaConversionError { from: value.type_name(), to: stringify!($name).into(), message: None })
                 } else {
-                    let unwrapped = unsafe {ud.unwrap_unchecked()}.borrow::<$ident>();
+                    let unwrapped = unsafe {ud.unwrap_unchecked()}.borrow::<$name>();
                     if unwrapped.is_err() {
-                        Err(LuaError::FromLuaConversionError { from: "userdata", to: stringify!($ident).into(), message: None })
+                        Err(LuaError::FromLuaConversionError { from: "userdata", to: stringify!($name).into(), message: None })
                     } else {
                         unsafe { Ok(unwrapped.unwrap_unchecked().clone()) }
                     }

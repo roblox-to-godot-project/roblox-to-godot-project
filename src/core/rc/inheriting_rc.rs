@@ -1,46 +1,34 @@
 use std::alloc::Layout;
-use std::borrow::{Borrow, BorrowMut};
-use std::mem::{transmute, ManuallyDrop, MaybeUninit};
-use std::ops::{Deref, DerefMut};
+use std::borrow::Borrow;
+use std::hash::{Hash, Hasher};
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::ops::Deref;
 use std::panic::{RefUnwindSafe, UnwindSafe};
-use std::ptr::NonNull;
+use std::ptr::{addr_eq, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::sync::TryLockError as RwTryLockError;
 
-use crate::core::{fat_to_metadata, inheritance_cast_to_mut, inheritance_is_of_type, thin_to_fat_mut, PtrMetadata};
+use crate::core::{fat_to_metadata, inheritance_cast_to_mut, inheritance_is_of_type, thin_to_fat_mut};
 use crate::core::{alloc::{Allocator, Global}, null_mut, InheritanceBase};
-use crate::godot_debug;
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
-pub struct PoisonError;
-pub type LockResult<T> = Result<T, PoisonError>;
-pub type TryLockResult<T> = Result<T, TryLockError>;
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TryLockError {
-    Poisoned,
-    WouldBlock
-}
 
 fn create_layout_for_header(layout: Layout) -> Layout {
-    Layout::new::<ITrcHead<()>>().extend(layout).unwrap().0
+    Layout::new::<IrcHead<()>>().extend(layout).unwrap().0
 }
 
 #[repr(C)]
-pub struct ITrcHead<T: ?Sized> {
+pub struct IrcHead<T: ?Sized> {
     layout: Layout, // represents T's size
     destroy: unsafe fn(*mut u8) -> (),
     strong: AtomicU32,
     weak: AtomicU32,
-    lock: RwLock<()>,
     base: *mut dyn InheritanceBase,
     data: ManuallyDrop<T>
 }
 
-impl<T: Sized + InheritanceBase> ITrcHead<T> {
+impl<T: Sized + InheritanceBase> IrcHead<T> {
     fn new<A: Allocator>(value: T, alloc: &A) -> NonNull<Self> {
         let ptr = alloc.allocate(Layout::new::<Self>()).unwrap().cast();
         unsafe {
-            ptr.write(ITrcHead::<T> {
+            ptr.write(IrcHead::<T> {
                 layout: Layout::new::<T>(),
                 destroy: |data| {
                     let t: *mut T = data as *mut T;
@@ -48,7 +36,6 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
                 },
                 strong: AtomicU32::new(1),
                 weak: AtomicU32::new(1),
-                lock: RwLock::new(()),
                 base: null_mut(),
                 data: ManuallyDrop::new(value)
             });
@@ -59,12 +46,12 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
     fn new_cyclic<A, F>(data_fn: F, alloc: &A) -> NonNull<Self> 
     where 
         F: FnOnce (&IWeak<T, A>) -> T,
-        A: Allocator + Send + Sync + Clone
+        A: Allocator + Clone
     {
         let mut ptr = alloc.allocate(Layout::new::<Self>()).unwrap().cast();
         let data_ptr;
         unsafe {
-            ptr.write(ITrcHead::<T> {
+            ptr.write(IrcHead::<T> {
                 layout: Layout::new::<T>(),
                 destroy: |data| {
                     let t: *mut T = data as *mut T;
@@ -72,7 +59,6 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
                 },
                 strong: AtomicU32::new(1),
                 weak: AtomicU32::new(2),
-                lock: RwLock::new(()),
                 base: null_mut(),
                 data: ManuallyDrop::new(MaybeUninit::uninit().assume_init())
             });
@@ -90,10 +76,10 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
         }
         ptr
     }
-    fn new_uninit<A: Allocator>(alloc: &A) -> NonNull<ITrcHead<MaybeUninit<T>>> {
-        let ptr = alloc.allocate(Layout::new::<ITrcHead<MaybeUninit<T>>>()).unwrap().cast();
+    fn new_uninit<A: Allocator>(alloc: &A) -> NonNull<IrcHead<MaybeUninit<T>>> {
+        let ptr = alloc.allocate(Layout::new::<IrcHead<MaybeUninit<T>>>()).unwrap().cast();
         unsafe {
-            ptr.write(ITrcHead::<MaybeUninit<T>> {
+            ptr.write(IrcHead::<MaybeUninit<T>> {
                 layout: Layout::new::<T>(),
                 destroy: |data| {
                     let t: *mut T = data as *mut T;
@@ -101,7 +87,6 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
                 },
                 strong: AtomicU32::new(1),
                 weak: AtomicU32::new(1),
-                lock: RwLock::new(()),
                 base: null_mut(),
                 data: ManuallyDrop::new(MaybeUninit::uninit())
             });
@@ -110,34 +95,34 @@ impl<T: Sized + InheritanceBase> ITrcHead<T> {
     }
 }
 
-impl<T: ?Sized> ITrcHead<T> {
+impl<T: ?Sized> IrcHead<T> {
     unsafe fn drop_in_place(&mut self) {
         (self.destroy)((&raw mut self.data).cast())
     }
 }
 #[derive(Debug)]
-pub struct ITrc<T, A = Global>
+pub struct Irc<T, A = Global>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    head: NonNull<ITrcHead<T>>,
+    head: NonNull<IrcHead<T>>,
     ptr: *mut T,
     alloc: A
 }
 
 
-impl<T: RefUnwindSafe + ?Sized, A: Allocator + Send + Sync + UnwindSafe> UnwindSafe for ITrc<T, A> {}
-impl<T: RefUnwindSafe + ?Sized, A: Allocator + Send + Sync + UnwindSafe> RefUnwindSafe for ITrc<T, A> {}
-impl<T: RefUnwindSafe + ?Sized, A: Allocator + Send + Sync + UnwindSafe> UnwindSafe for IWeak<T, A> {}
-impl<T: RefUnwindSafe + ?Sized, A: Allocator + Send + Sync + UnwindSafe> RefUnwindSafe for IWeak<T, A> {}
+impl<T: RefUnwindSafe + ?Sized, A: Allocator + UnwindSafe> UnwindSafe for Irc<T, A> {}
+impl<T: RefUnwindSafe + ?Sized, A: Allocator + UnwindSafe> RefUnwindSafe for Irc<T, A> {}
+impl<T: RefUnwindSafe + ?Sized, A: Allocator + UnwindSafe> UnwindSafe for IWeak<T, A> {}
+impl<T: RefUnwindSafe + ?Sized, A: Allocator + UnwindSafe> RefUnwindSafe for IWeak<T, A> {}
 
-impl<T, A> ITrc<T, A>
+impl<T, A> Irc<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    fn deconstruct(self) -> (NonNull<ITrcHead<T>>, *mut T, A) {
+    fn deconstruct(self) -> (NonNull<IrcHead<T>>, *mut T, A) {
         let t = ManuallyDrop::new(self);
         (t.head, t.ptr, unsafe { (&raw const t.alloc).read() })
     }
@@ -180,9 +165,9 @@ where
 impl<T, A> IWeak<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    fn deconstruct(self) -> (NonNull<ITrcHead<T>>, *mut T, A) {
+    fn deconstruct(self) -> (NonNull<IrcHead<T>>, *mut T, A) {
         let t = ManuallyDrop::new(self);
         (t.head, t.ptr, unsafe { (&raw const t.alloc).read() })
     }
@@ -222,13 +207,13 @@ where
     }
 }
 
-impl<T> ITrc<T>
+impl<T> Irc<T>
 where
     T: Sized + InheritanceBase,
 {
     pub fn new(value: T) -> Self {
-        let head = ITrcHead::<T>::new(value, &Global);
-        ITrc::<T> {
+        let head = IrcHead::<T>::new(value, &Global);
+        Irc::<T> {
             head,
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc: Global
@@ -238,16 +223,16 @@ where
     where
         F: FnOnce(&IWeak<T>) -> T
     {
-        let head = ITrcHead::<T>::new_cyclic(data_fn, &Global);
-        ITrc::<T> {
+        let head = IrcHead::<T>::new_cyclic(data_fn, &Global);
+        Irc::<T> {
             head,
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc: Global
         }
     }
-    pub fn new_uninit() -> ITrc<MaybeUninit<T>> {
-        let head = ITrcHead::<T>::new_uninit( &Global);
-        ITrc::<MaybeUninit<T>> {
+    pub fn new_uninit() -> Irc<MaybeUninit<T>> {
+        let head = IrcHead::<T>::new_uninit( &Global);
+        Irc::<MaybeUninit<T>> {
             head,
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc: Global
@@ -255,14 +240,14 @@ where
     }
 }
 
-impl<T, A> ITrc<T, A>
+impl<T, A> Irc<T, A>
 where
     T: Sized + InheritanceBase,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
     pub fn new_in(value: T, alloc: A) -> Self {
-        let head = ITrcHead::<T>::new(value, &alloc);
-        ITrc::<T, A> {
+        let head = IrcHead::<T>::new(value, &alloc);
+        Irc::<T, A> {
             head,
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc
@@ -273,16 +258,16 @@ where
         F: FnOnce(&IWeak<T, A>) -> T,
         A: Clone
     {
-        let head = ITrcHead::<T>::new_cyclic(data_fn, &alloc);
-        ITrc::<T, A> {
+        let head = IrcHead::<T>::new_cyclic(data_fn, &alloc);
+        Irc::<T, A> {
             head,
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc
         }
     }
-    pub fn new_uninit_in(alloc: A) -> ITrc<MaybeUninit<T>, A> {
-        let head = ITrcHead::<T>::new_uninit(&alloc);
-        ITrc::<MaybeUninit<T>, A> {
+    pub fn new_uninit_in(alloc: A) -> Irc<MaybeUninit<T>, A> {
+        let head = IrcHead::<T>::new_uninit(&alloc);
+        Irc::<MaybeUninit<T>, A> {
             head,
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc
@@ -291,12 +276,12 @@ where
 }
 
 
-impl<T, A> ITrc<T, A>
+impl<T, A> Irc<T, A>
 where
     T: InheritanceBase + ?Sized + 'static,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    pub fn cast_unsized<U: 'static + ?Sized>(self) -> Result<ITrc<U, A>, ITrc<T, A>> {
+    pub fn cast_from_unsized<U: 'static + ?Sized>(self) -> Result<Irc<U, A>, Irc<T, A>> {
         let (head, ptr, alloc) = self.deconstruct();
         let p = head.as_ptr();
         let metadata = unsafe { fat_to_metadata(p) }; 
@@ -305,14 +290,14 @@ where
         if result.is_ok() {
             unsafe {
                 let new_ptr = &raw mut *result.unwrap_unchecked();
-                Ok(ITrc::<U, A> {
+                Ok(Irc::<U, A> {
                     head: NonNull::new_unchecked(thin_to_fat_mut(head.cast().as_ptr(), metadata)),
                     ptr: new_ptr,
                     alloc
                 })
             }
         } else {
-            Err(ITrc::<T, A> {
+            Err(Irc::<T, A> {
                 head,
                 ptr,
                 alloc
@@ -324,28 +309,28 @@ where
         inheritance_is_of_type!(base, U)
     }
 }
-impl<T, A> ITrc<T, A>
+impl<T, A> Irc<T, A>
 where
     T: InheritanceBase + 'static,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    pub fn cast_sized<U: 'static + ?Sized>(self) -> Result<ITrc<U, A>, ITrc<T, A>> {
+    pub fn cast_from_sized<U: 'static + ?Sized>(self) -> Result<Irc<U, A>, Irc<T, A>> {
         let (head, ptr, alloc) = self.deconstruct();
         let p = head.as_ptr();
-        let metadata = unsafe { fat_to_metadata(p as *mut ITrcHead<dyn InheritanceBase>) }; 
+        let metadata = unsafe { fat_to_metadata(p as *mut IrcHead<dyn InheritanceBase>) }; 
         let base =  unsafe { head.as_ptr().as_mut().unwrap_unchecked().base.as_mut().unwrap_unchecked() };
         let result = inheritance_cast_to_mut!(base, U);
         if result.is_ok() {
             unsafe {
                 let new_ptr = &raw mut *result.unwrap_unchecked();
-                Ok(ITrc::<U, A> {
+                Ok(Irc::<U, A> {
                     head: NonNull::new_unchecked(thin_to_fat_mut(head.cast().as_ptr(), metadata)),
                     ptr: new_ptr,
                     alloc
                 })
             }
         } else {
-            Err(ITrc::<T, A> {
+            Err(Irc::<T, A> {
                 head,
                 ptr,
                 alloc
@@ -354,16 +339,16 @@ where
     }
 }
 
-impl<T, A> ITrc<MaybeUninit<T>, A>
+impl<T, A> Irc<MaybeUninit<T>, A>
 where
     T: InheritanceBase,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    pub unsafe fn assume_init(self) -> ITrc<T, A> {
+    pub unsafe fn assume_init(self) -> Irc<T, A> {
         let (head, ptr, alloc) = self.deconstruct();
         let ptr = ptr.cast();
         head.as_ptr().as_mut().unwrap_unchecked().base = ptr as *mut dyn InheritanceBase;
-        ITrc::<T, A> {
+        Irc::<T, A> {
             head: head.cast(),
             ptr,
             alloc
@@ -371,84 +356,40 @@ where
     }
 }
 
-impl<T, A> ITrc<T, A>
+impl<T, A> Irc<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
     pub unsafe fn access(&self) -> *mut T {
         self.ptr
     }
-    pub fn read<'a>(&'a self) -> LockResult<ITrcReadLock<'a, T, A>> {
-        let lock = unsafe { self.head.as_ptr().as_mut().unwrap_unchecked().lock.read() };
-        if lock.is_ok() {
-            unsafe { Ok(ITrcReadLock { 
-                read: transmute(lock.unwrap_unchecked()), // SAFETY: Casting away lifetime, putting it in rc field
-                rc: &self
-            })}
-        } else {
-            Err(PoisonError)
-        }
+}
+impl<T, A> Deref for Irc<T, A>
+where
+    T: ?Sized,
+    A: Allocator
+{
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref().unwrap_unchecked() }
     }
-    pub fn write<'a>(&'a self) -> LockResult<ITrcWriteLock<'a, T, A>> {
-        let lock = unsafe { self.head.as_ptr().as_mut().unwrap_unchecked().lock.write() };
-        if lock.is_ok() {
-            unsafe { Ok(ITrcWriteLock { 
-                write: transmute(lock.unwrap_unchecked()), // SAFETY: Casting away lifetime, putting it in rc field
-                rc: &self
-            })}
-        } else {
-            Err(PoisonError)
-        }
-    }
-    pub fn is_poisoned(&self) -> bool {
-        unsafe {
-            self.head.as_ptr().as_mut().unwrap_unchecked().lock.is_poisoned()
-        }
-    }
-    pub fn clear_poison(&self) {
-        unsafe {
-            self.head.as_ptr().as_mut().unwrap_unchecked().lock.clear_poison();
-        }
-    }
-    pub fn try_read<'a>(&'a self) -> TryLockResult<ITrcReadLock<'a, T, A>> {
-        let lock = unsafe { self.head.as_ptr().as_mut().unwrap_unchecked().lock.try_read() };
-        if lock.is_ok() {
-            unsafe { Ok(ITrcReadLock { 
-                read: transmute(lock.unwrap_unchecked()), // SAFETY: Casting away lifetime, putting it in rc field
-                rc: &self
-            })}
-        } else {
-            unsafe {
-                Err(match lock.unwrap_err_unchecked() {
-                    RwTryLockError::Poisoned(_) => TryLockError::Poisoned,
-                    RwTryLockError::WouldBlock => TryLockError::WouldBlock
-                })
-            }
-        }
-    }
-    pub fn try_write<'a>(&'a self) -> TryLockResult<ITrcWriteLock<'a, T, A>> {
-        let lock = unsafe { self.head.as_ptr().as_mut().unwrap_unchecked().lock.try_write() };
-        if lock.is_ok() {
-            unsafe { Ok(ITrcWriteLock { 
-                write: transmute(lock.unwrap_unchecked()), // SAFETY: Casting away lifetime, putting it in rc field
-                rc: &self
-            })}
-        } else {
-            unsafe {
-                Err(match lock.unwrap_err_unchecked() {
-                    RwTryLockError::Poisoned(_) => TryLockError::Poisoned,
-                    RwTryLockError::WouldBlock => TryLockError::WouldBlock
-                })
-            }
-        }
+}
+impl<T, A> Borrow<T> for Irc<T, A>
+where
+    T: ?Sized,
+    A: Allocator
+{
+    fn borrow(&self) -> &T {
+        unsafe { self.ptr.as_ref().unwrap_unchecked() }
     }
 }
 
-impl<T, A> ITrc<T, A>
+impl<T, A> Irc<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync + Clone
+    A: Allocator + Clone
 {
     pub fn downgrade(&self) -> IWeak<T, A> {
         unsafe { self.increment_weak_count(); }
@@ -460,54 +401,36 @@ where
 pub struct IWeak<T, A = Global>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
-    head: NonNull<ITrcHead<T>>,
+    head: NonNull<IrcHead<T>>,
     ptr: *mut T,
     alloc: A
 }
 
-pub struct ITrcReadLock<'a, T, A = Global>
-where
-    T: ?Sized,
-    A: Allocator + Send + Sync
-{
-    read: RwLockReadGuard<'static, ()>,
-    rc: &'a ITrc<T, A>
-}
-
-pub struct ITrcWriteLock<'a, T, A = Global>
-where
-    T: ?Sized,
-    A: Allocator + Send + Sync
-{
-    write: RwLockWriteGuard<'static, ()>,
-    rc: &'a ITrc<T, A>
-}
-
-unsafe impl<T, A> Send for ITrc<T, A> where
-    T: ?Sized,
+unsafe impl<T, A> Send for Irc<T, A> where
+    T: ?Sized + Send + Sync,
     A: Allocator + Send + Sync
 {}
-unsafe impl<T, A> Sync for ITrc<T, A> where
-    T: ?Sized,
+unsafe impl<T, A> Sync for Irc<T, A> where
+    T: ?Sized + Send + Sync,
     A: Allocator + Send + Sync
 {}
 
 unsafe impl<T, A> Send for IWeak<T, A> where
-    T: ?Sized,
+    T: ?Sized + Send + Sync,
     A: Allocator + Send + Sync
 {}
 unsafe impl<T, A> Sync for IWeak<T, A> where
-    T: ?Sized,
+    T: ?Sized + Send + Sync,
     A: Allocator + Send + Sync
 {}
 
 
-impl<T, A> Drop for ITrc<T, A>
+impl<T, A> Drop for Irc<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
     #[inline]
     fn drop(&mut self) {
@@ -528,46 +451,10 @@ where
     }
 }
 
-impl<'a, T: ?Sized, A: Allocator + Send + Sync> Deref for ITrcReadLock<'a, T, A> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe {&*self.rc.access()}
-    }
-}
-impl<'a, T: ?Sized> Deref for ITrcWriteLock<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe {&*self.rc.access()}
-    }
-}
-impl<'a, T: ?Sized> DerefMut for ITrcWriteLock<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {&mut *self.rc.access()}
-    }
-}
-
-impl<'a, T: ?Sized> Borrow<T> for ITrcReadLock<'a, T> {
-    fn borrow(&self) -> &T {
-        unsafe {&*self.rc.access()}
-    }
-}
-impl<'a, T: ?Sized> Borrow<T> for ITrcWriteLock<'a, T> {
-    fn borrow(&self) -> &T {
-        unsafe {&*self.rc.access()}
-    }
-}
-impl<'a, T: ?Sized> BorrowMut<T> for ITrcWriteLock<'a, T> {
-    fn borrow_mut(&mut self) -> &mut T {
-        unsafe {&mut *self.rc.access()}
-    }
-}
-
 impl<T, A> Drop for IWeak<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync
+    A: Allocator
 {
     #[inline]
     fn drop(&mut self) {
@@ -584,11 +471,11 @@ where
 impl<T, A> IWeak<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync + Clone
+    A: Allocator + Clone
 {
-    pub fn upgrade(&self) -> Option<ITrc<T, A>> {
+    pub fn upgrade(&self) -> Option<Irc<T, A>> {
         if unsafe { self.increment_strong_count_if_exists() } {
-            Some(ITrc::<T, A> {
+            Some(Irc::<T, A> {
                 head: self.head,
                 ptr: self.ptr,
                 alloc: self.alloc.clone()
@@ -600,14 +487,14 @@ where
     pub fn dead(&self) -> bool {
         self.weak_count() == 0
     }
-    pub fn into_inner_with_allocator(self) -> (NonNull<ITrcHead<T>>, *mut T, A) {
+    pub fn into_inner_with_allocator(self) -> (NonNull<IrcHead<T>>, *mut T, A) {
         let m = ManuallyDrop::new(self);
         let a = unsafe { (&raw const m.alloc).read() };
         let p = m.ptr;
         let head = m.head;
         (head, p, a)
     }
-    pub fn from_inner_with_allocator(tuple: (NonNull<ITrcHead<T>>, *mut T, A)) -> Self {
+    pub fn from_inner_with_allocator(tuple: (NonNull<IrcHead<T>>, *mut T, A)) -> Self {
         IWeak {
             head: tuple.0,
             ptr: tuple.1,
@@ -616,10 +503,10 @@ where
     }
 }
 
-impl <T, A> Clone for ITrc<T, A>
+impl <T, A> Clone for Irc<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync + Clone
+    A: Allocator + Clone
 {
     fn clone(&self) -> Self {
         unsafe { self.increment_strong_count(); }
@@ -633,7 +520,7 @@ where
 impl <T, A> Clone for IWeak<T, A>
 where
     T: ?Sized,
-    A: Allocator + Send + Sync + Clone
+    A: Allocator + Clone
 {
     fn clone(&self) -> Self {
         unsafe { self.increment_weak_count(); }
@@ -644,3 +531,48 @@ where
         }
     }
 }
+
+impl <T, A> Hash for Irc<T, A>
+where
+    T: ?Sized,
+    A: Allocator
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.head.hash(state);
+    }
+}
+
+impl <T, A> Hash for IWeak<T, A>
+where
+    T: ?Sized,
+    A: Allocator
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.head.hash(state);
+    }
+}
+
+
+impl <T, A> PartialEq for Irc<T, A>
+where
+    T: ?Sized,
+    A: Allocator
+{
+    fn eq(&self, other: &Self) -> bool {
+        addr_eq(self.head.as_ptr(), other.head.as_ptr())
+    }
+}
+
+impl <T, A> PartialEq for IWeak<T, A>
+where
+    T: ?Sized,
+    A: Allocator
+{
+    fn eq(&self, other: &Self) -> bool {
+        addr_eq(self.head.as_ptr(), other.head.as_ptr())
+    }
+
+}
+
+impl <T: ?Sized, A: Allocator> Eq for Irc<T, A> {}
+impl <T: ?Sized, A: Allocator> Eq for IWeak<T, A> {}

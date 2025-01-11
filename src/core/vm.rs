@@ -1,17 +1,30 @@
-use std::{sync::RwLock, thread::panicking};
+use std::borrow::BorrowMut;
+use std::collections::HashMap;
+use std::thread::panicking;
 use std::marker::PhantomPinned;
 
 use godot::global::godot_print_rich;
 use godot::{builtin::Variant, global::{godot_print, print_rich, printt}, meta::ToGodot};
 use mlua::prelude::*;
 
+use crate::core::scheduler::GlobalTaskScheduler;
+
 use super::state::LuauState;
-use super::InstanceReplicationTable;
+use super::{InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Watchdog};
 
 pub struct RobloxVM {
-    main_state: LuauState,
-    states: Vec<RwLock<LuauState>>,
+    main_state: RwLock<LuauState>,
+    states: Vec<Option<RwLock<LuauState>>>,
     instances: InstanceReplicationTable,
+    instances_tag_collection: InstanceTagCollectionTable,
+
+    states_locks: HashMap<*mut LuauState, *const RwLock<LuauState>>,
+    
+    sandbox_globals: bool, // todo! replace with fast flags
+    
+    hard_wd: Watchdog,
+    soft_wd: Watchdog,
+
     _pin: PhantomPinned
 }
 
@@ -38,20 +51,32 @@ pub(crate) fn args_to_string(args: LuaMultiValue, delimiter: &str) -> String {
 }
 
 impl RobloxVM {
-    pub fn new() -> Box<RwLock<RobloxVM>> {
+    pub fn new(sandbox_globals: Option<bool>) -> Box<RwLock<RobloxVM>> {
         unsafe {
             let mut vm = Box::new(RwLock::new(RobloxVM {
-                main_state: LuauState::new_uninit(),
+                main_state: RwLock::new(LuauState::new_uninit()),
                 states: Vec::new(),
+                states_locks: HashMap::new(),
                 instances: InstanceReplicationTable::default(),
+                instances_tag_collection: InstanceTagCollectionTable::default(),
+                sandbox_globals: sandbox_globals.unwrap_or(false),
+                hard_wd: Watchdog::new_timeout(10.0),
+                soft_wd: Watchdog::new_timeout(1.0/60.0),
                 _pin: PhantomPinned::default()
             }));
             let vm_ptr = &raw mut *vm;
+            let main_state_ptr = vm.get_mut().main_state.access();
+            let main_state_lock_ptr = &raw const vm.get_mut().main_state;
+            vm.get_mut().states_locks.insert(main_state_ptr, main_state_lock_ptr);
 
-            vm.get_mut().unwrap_unchecked().main_state.init(vm_ptr);
+            vm.get_mut().main_state.get_mut().init(vm_ptr, Box::new(GlobalTaskScheduler::new()));
             godot_print!("RobloxVM instance created.");
             vm
         }
+    }
+    #[inline]
+    pub fn are_globals_readonly(&self) -> bool {
+        self.sandbox_globals
     }
     pub fn log_message(&self, args: LuaMultiValue) {
         let v = args_to_variant(args);
@@ -79,7 +104,51 @@ impl RobloxVM {
         print_rich(&v)
     }
     pub fn get_main_state(&mut self) -> &mut LuauState {
-        &mut self.main_state
+        unsafe { &mut *self.main_state.access() }
+    }
+    pub(super) fn get_state_with_rwlock(&self, ptr: *mut LuauState) -> Option<*const RwLock<LuauState>> {
+        self.states_locks.get(&ptr).map(|x| *x)
+    }
+    unsafe fn watchdog_trip_state(state: *mut LuauState) {
+        state.as_mut().unwrap_unchecked().get_lua().set_interrupt(
+            |_| Err(LuaError::RuntimeError("script exhausted maximum execution time".into()))
+        );
+    }
+    fn watchdog_reset_state(state: &mut LuauState) {
+        state.get_lua().remove_interrupt();
+    }
+    pub fn watchdog_trip(&self) {
+        self.hard_wd.trip();
+        // SAFETY: Luau permits setting interrupt from other threads.
+        unsafe { 
+            Self::watchdog_trip_state(self.main_state.access());
+            for i in self.states.iter() {
+                i.as_ref().map(|x| {
+                    Self::watchdog_trip_state(x.access());
+                });
+            }
+        }
+    }
+    pub fn watchdog_reset(&mut self) {
+        if self.hard_wd.check() {
+            Self::watchdog_reset_state(unsafe { self.main_state.access().as_mut().unwrap_unchecked() });
+            for i in self.states.iter() {
+                i.as_ref().map(|x| {
+                    Self::watchdog_reset_state(x.write().unwrap().borrow_mut());
+                });
+            }
+        }
+        self.hard_wd.reset();
+        self.soft_wd.reset();
+    }
+    pub(crate) fn watchdog_check(&self) -> bool {
+        if self.hard_wd.check() {
+            self.watchdog_trip();
+        }
+        self.soft_wd.check()
+    }
+    pub(crate) fn get_instance_tag_table(&self) -> &InstanceTagCollectionTable {
+        &self.instances_tag_collection
     }
 }
 

@@ -1,9 +1,11 @@
 use std::borrow::Borrow;
 use std::borrow::BorrowMut;
+use std::fmt::Debug;
 use std::mem::transmute;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::ptr::drop_in_place;
 use std::sync::RwLock as StdRwLock;
 use std::sync::RwLockReadGuard as StdRwLockReadGuard;
 use std::sync::RwLockWriteGuard as StdRwLockWriteGuard;
@@ -25,6 +27,14 @@ pub struct RwLockWriteGuard<'a, T: ?Sized> {
     lock: &'a RwLock<T>
 }
 #[derive(Debug)]
+pub struct RwLockReadReleaseGuard<'a, 'b, T: ?Sized> {
+    guard: &'b mut RwLockReadGuard<'a, T>
+}
+#[derive(Debug)]
+pub struct RwLockWriteReleaseGuard<'a, 'b, T: ?Sized> {
+    guard: &'b mut RwLockWriteGuard<'a, T>
+}
+
 pub struct PoisonError<T: ?Sized> {
     guard: T
 }
@@ -144,6 +154,42 @@ impl<T: ?Sized> RwLock<T> {
     }
 }
 
+impl<'a, T: ?Sized> RwLockReadGuard<'a, T> {
+    pub fn guard_release<'b>(&'b mut self) -> RwLockReadReleaseGuard<'a, 'b, T> {
+        // SAFETY: Before dropping RWLockReadGuard, RWLockReadReleaseGuard restores it
+        unsafe { drop_in_place(&raw mut self.guard) };
+        RwLockReadReleaseGuard { guard: self }
+    }
+}
+impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
+    pub fn guard_release<'b>(&'b mut self) -> RwLockWriteReleaseGuard<'a, 'b, T> {
+        // SAFETY: Before dropping RWLockWriteGuard, RWLockWriteReleaseGuard restores it
+        unsafe { drop_in_place(&raw mut self.guard) };
+        RwLockWriteReleaseGuard { guard: self }
+    }
+}
+
+impl<'a, 'b, T: ?Sized> Drop for RwLockReadReleaseGuard<'a, 'b, T> {
+    fn drop(&mut self) {
+        let guard = self.guard.lock.read();
+        if guard.is_ok() {
+            unsafe { (&raw mut self.guard.guard).write(guard.unwrap_unchecked().guard) };
+        } else {
+            panic!("lock poisoned");
+        }
+    }
+}
+impl<'a, 'b, T: ?Sized> Drop for RwLockWriteReleaseGuard<'a, 'b, T> {
+    fn drop(&mut self) {
+        let guard = self.guard.lock.write();
+        if guard.is_ok() {
+            unsafe { (&raw mut self.guard.guard).write(guard.unwrap_unchecked().guard) };
+        } else {
+            panic!("lock poisoned");
+        }
+    }
+}
+
 impl<'a, T: ?Sized> Deref for RwLockReadGuard<'a, T> {
     type Target = T;
     #[inline]
@@ -195,5 +241,11 @@ impl<T> PoisonError<T> {
     #[inline]
     pub fn into_inner(self) -> T {
         self.guard
+    }
+}
+
+impl<T: ?Sized> Debug for PoisonError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoisonError").finish()
     }
 }

@@ -18,6 +18,8 @@ use std::sync::atomic::Ordering::Release;
 
 use crate::core::alloc::{Allocator, Global};
 use crate::core::PtrMetadata;
+use crate::core::RwLockReadReleaseGuard;
+use crate::core::RwLockWriteReleaseGuard;
 use crate::core::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::core::pointers::thin_to_fat_mut;
 
@@ -340,6 +342,17 @@ impl<'a, T: ?Sized, A: Allocator> Borrow<T> for TrcWriteLock<'a, T, A> {
 impl<'a, T: ?Sized, A: Allocator> BorrowMut<T> for TrcWriteLock<'a, T, A> {
     fn borrow_mut(&mut self) -> &mut T {
         self.guard.deref_mut()
+    }
+}
+
+impl<'a, T: ?Sized> TrcReadLock<'a, T> {
+    pub fn guard_release<'b>(&'b mut self) -> RwLockReadReleaseGuard<'static, 'b, ManuallyDrop<T>> {
+        self.guard.guard_release()
+    }
+}
+impl<'a, T: ?Sized> TrcWriteLock<'a, T> {
+    pub fn guard_release<'b>(&'b mut self) -> RwLockWriteReleaseGuard<'static, 'b, ManuallyDrop<T>> {
+        self.guard.guard_release()
     }
 }
 

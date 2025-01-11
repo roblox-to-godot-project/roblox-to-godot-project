@@ -18,6 +18,9 @@ macro_rules! lua_getter {
     (opt_weak_clone, $lua: ident, $prop: expr) => {
         IntoLua::into_lua($prop.as_ref().map(|x| x.upgrade()).flatten(), $lua)
     };
+    (function, $lua: ident, $func: expr) => {
+        Ok(mlua::Value::Function($lua.create_function($func)?))
+    };
 }
 macro_rules! lua_setter {
     ($lua: ident, $prop: expr, $value: ident) => {

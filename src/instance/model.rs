@@ -1,8 +1,10 @@
+use mlua::prelude::*;
+
 use super::instance::IInstanceComponent;
 use super::pvinstance::IPVInstance;
 use super::{IInstance, IObject, InstanceComponent, ManagedInstance, PVInstanceComponent};
 
-use crate::core::{ITrc, IWeak, InheritanceBase, InheritanceTable, InheritanceTableBuilder};
+use crate::core::{IWeak, InheritanceBase, InheritanceTable, InheritanceTableBuilder, Irc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::userdata::CFrame;
 use crate::userdata::enums::{ModelLevelOfDetail, ModelStreamingMode};
 
@@ -15,13 +17,13 @@ pub struct ModelComponent {
 }
 #[derive(Debug)]
 pub struct Model {
-    instance: InstanceComponent,
-    pvinstance: PVInstanceComponent,
-    model: ModelComponent
+    instance: RwLock<InstanceComponent>,
+    pvinstance: RwLock<PVInstanceComponent>,
+    model: RwLock<ModelComponent>
 }
 pub trait IModel: IPVInstance {
-    fn get_model_component(&self) -> &ModelComponent;
-    fn get_model_component_mut(&mut self) -> &mut ModelComponent;
+    fn get_model_component(&self) -> RwLockReadGuard<'_,ModelComponent>;
+    fn get_model_component_mut(&self) -> RwLockWriteGuard<'_,ModelComponent>;
 }
 
 impl InheritanceBase for Model {
@@ -35,7 +37,7 @@ impl InheritanceBase for Model {
     }
 }
 impl IObject for Model {
-    fn is_a(&self, class_name: String) -> bool {
+    fn is_a(&self, class_name: &String) -> bool {
         match class_name.as_str() {
             "Model" |
             "PVInstance" |
@@ -44,7 +46,7 @@ impl IObject for Model {
             _ => false
         }
     }
-    fn lua_get(&self, lua: &mlua::Lua, name: String) -> mlua::Result<mlua::Value> {
+    fn lua_get(&self, lua: &Lua, name: String) -> LuaResult<LuaValue> {
         todo!()
     }
     fn get_changed_signal(&self) -> crate::userdata::RBXScriptSignal {
@@ -56,47 +58,47 @@ impl IObject for Model {
     fn get_class_name(&self) -> &'static str { "Model" }
 }
 impl IInstance for Model {
-    fn get_instance_component(&self) -> &InstanceComponent {
-        &self.instance
+    fn get_instance_component(&self) -> RwLockReadGuard<'_, InstanceComponent> {
+        self.instance.read().unwrap()
     }
-    fn get_instance_component_mut(&mut self) -> &mut InstanceComponent {
-        &mut self.instance
+    fn get_instance_component_mut(&self) -> RwLockWriteGuard<'_, InstanceComponent> {
+        self.instance.write().unwrap()
     }
-    fn lua_set(&mut self, lua: &mlua::Lua, name: String, val: mlua::Value) -> mlua::Result<()> {
+    fn lua_set(&self, lua: &Lua, name: String, val: LuaValue) -> LuaResult<()> {
         todo!()
     }
-    fn clone_instance(&self) -> mlua::Result<ManagedInstance> {
+    fn clone_instance(&self) -> LuaResult<ManagedInstance> {
         todo!()
     }
 }
 impl IPVInstance for Model {
-    fn get_pv_instance_component(&self) -> &PVInstanceComponent {
-        &self.pvinstance
+    fn get_pv_instance_component(&self) -> RwLockReadGuard<'_, PVInstanceComponent> {
+        self.pvinstance.read().unwrap()
     }
 
-    fn get_pv_instance_component_mut(&mut self) -> &mut PVInstanceComponent {
-        &mut self.pvinstance
+    fn get_pv_instance_component_mut(&self) -> RwLockWriteGuard<'_, PVInstanceComponent> {
+        self.pvinstance.write().unwrap()
     }
 }
 impl IModel for Model {
-    fn get_model_component(&self) -> &ModelComponent {
-        &self.model
+    fn get_model_component(&self) -> RwLockReadGuard<'_, ModelComponent> {
+        self.model.read().unwrap()
     }
-    fn get_model_component_mut(&mut self) -> &mut ModelComponent {
-        &mut self.model
+    fn get_model_component_mut(&self) -> RwLockWriteGuard<'_, ModelComponent> {
+        self.model.write().unwrap()
     }
 }
 
 impl IInstanceComponent for ModelComponent {
-    fn lua_get(&self, ptr: super::WeakManagedInstance, lua: &mlua::Lua, key: &String) -> Option<mlua::Result<mlua::Value>> {
+    fn lua_get(self: &mut RwLockReadGuard<'_, ModelComponent>, ptr: super::WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
         todo!()
     }
 
-    fn lua_set(&mut self, ptr: super::WeakManagedInstance, lua: &mlua::Lua, key: &String, value: &mlua::Value) -> Option<mlua::Result<()>> {
+    fn lua_set(self: &mut RwLockWriteGuard<'_, ModelComponent>, ptr: super::WeakManagedInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
         todo!()
     }
 
-    fn clone(&self, new_ptr: super::WeakManagedInstance) -> mlua::Result<Self> {
+    fn clone(self: &RwLockReadGuard<'_, ModelComponent>, new_ptr: super::WeakManagedInstance) -> LuaResult<Self> {
         todo!()
     }
 
@@ -112,12 +114,12 @@ impl IInstanceComponent for ModelComponent {
 
 impl Model {
     pub fn new() -> ManagedInstance {
-        ITrc::new_cyclic(|x| {
+        Irc::new_cyclic(|x| {
             Model {
-                instance: InstanceComponent::new(x.cast_to_instance(), "Model"),
-                pvinstance: PVInstanceComponent::new(x.cast_to_instance(), "Model"),
-                model: ModelComponent::new(x.cast_to_instance(), "Model")
+                instance: RwLock::new(InstanceComponent::new(x.cast_to_instance(), "Model")),
+                pvinstance: RwLock::new(PVInstanceComponent::new(x.cast_to_instance(), "Model")),
+                model: RwLock::new(ModelComponent::new(x.cast_to_instance(), "Model"))
             }
-        }).cast_sized().unwrap()
+        }).cast_from_sized().unwrap()
     }
 }

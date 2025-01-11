@@ -1,8 +1,11 @@
-use std::{collections::HashMap, ffi::c_void, mem::transmute, ptr::addr_of_mut, sync::{RwLock, RwLockReadGuard, RwLockWriteGuard}};
+use std::mem::MaybeUninit;
+use std::{collections::HashMap, ffi::c_void, mem::transmute, ptr::addr_of_mut};
 use std::ptr::null_mut;
 
 use godot::global::godot_print;
 use mlua::{prelude::*, ChunkMode, Compiler};
+use super::scheduler::ITaskScheduler;
+use super::{RwLock, RwLockReadGuard, RwLockWriteGuard, TaskScheduler};
 use super::{security::ThreadIdentityType, vm::RobloxVM};
 use crate::userdata::register_userdata_singletons;
 
@@ -19,10 +22,11 @@ pub struct ThreadIdentity {
 pub struct LuauState {
     vm: *mut RwLock<RobloxVM>,
     lua: Lua,
-    threads: HashMap<*const c_void, ThreadIdentity>
+    threads: HashMap<*const c_void, ThreadIdentity>,
+    task: MaybeUninit<Box<dyn ITaskScheduler>>
 }
 impl LuauState {
-    fn get_vm_from_lua(lua: &Lua) -> &mut RwLock<RobloxVM> {
+    fn get_vm_from_lua(lua: &Lua) -> &RwLock<RobloxVM> {
         unsafe {
             let ptr: *mut RwLock<RobloxVM> = transmute(
                 lua.named_registry_value::<LuaLightUserData>(registry_keys::VM_REGISTRYKEY)
@@ -40,16 +44,16 @@ impl LuauState {
         }
         match event {
             LuaThreadEventInfo::Created(parent) => {
-                godot_print!("LuaThreadEventInfo::Created(child: thread: {:x},parent: thread: {:x})",lua.current_thread().to_pointer() as isize,parent.to_pointer() as isize);
+                godot_print!("LuaThreadEventInfo::Created(child: thread: 0x{:x},parent: thread: 0x{:x})",lua.current_thread().to_pointer() as isize,parent.to_pointer() as isize);
                 let iden = state.threads.get(&parent.to_pointer());
                 if iden.is_some() {
                     state.threads.insert(lua.current_thread().to_pointer(), iden.unwrap().clone());
                 }
                 Ok(())
             }
-            LuaThreadEventInfo::Destroying => {
-                godot_print!("LuaThreadEventInfo::Destroying(thread: {:x})",lua.current_thread().to_pointer() as isize);
-                state.threads.remove(&lua.current_thread().to_pointer());
+            LuaThreadEventInfo::Destroyed(thread_ptr) => {
+                godot_print!("LuaThreadEventInfo::Destroyed(thread: 0x{:x})",thread_ptr as isize);
+                state.threads.remove(&thread_ptr);
                 Ok(())
             }
         }
@@ -71,27 +75,31 @@ impl LuauState {
         self.lua.sandbox(true).unwrap();
         self.lua.enable_jit(false);
         register_userdata_singletons(&mut self.lua).unwrap();
+        self.lua.globals().set_readonly(self.get_vm().are_globals_readonly());
         self.lua.set_thread_event_callback(Self::thread_event_callback);
     }
-    pub(super) unsafe fn init(&mut self, ptr: *mut RwLock<RobloxVM>) {
+    pub(super) unsafe fn init(&mut self, ptr: *mut RwLock<RobloxVM>, task: Box<dyn ITaskScheduler>) {
         self.vm = ptr;
+        self.task = MaybeUninit::new(task);
         self._init();
     }
     #[doc(hidden)]
-    pub(super) unsafe fn new(ptr: *mut RwLock<RobloxVM>) -> LuauState {
+    pub(super) fn new(ptr: *mut RwLock<RobloxVM>) -> LuauState {
         let mut state = LuauState {
             vm: ptr,
             lua: Lua::new(),
-            threads: HashMap::default()
+            threads: HashMap::default(),
+            task: MaybeUninit::new(Box::new(TaskScheduler::new()))
         };
-        state._init();
+        unsafe {state._init();}
         state
     }
     pub(super) unsafe fn new_uninit() -> LuauState {
         LuauState {
             vm: null_mut(),
             lua: Lua::new(),
-            threads: HashMap::default()
+            threads: HashMap::default(),
+            task: MaybeUninit::uninit()
         }
     }
     pub fn get_vm(&self) -> RwLockReadGuard<RobloxVM> {
@@ -105,6 +113,9 @@ impl LuauState {
         }
     }
 
+    pub(super) unsafe fn watchdog_check(&self) -> bool {
+        self.vm.as_ref().unwrap_unchecked().access().as_ref().unwrap_unchecked().watchdog_check()
+    }
 
     // Mutable borrow is forced here to prevent modifying the lua state with a read-only borrow.
     pub fn get_lua(&mut self) -> &mut Lua {
@@ -133,7 +144,7 @@ impl LuauState {
             .set_userdata_types(Self::get_userdata_types().into_iter().map(|x| String::from(*x)).collect())
             .set_type_info_level(1)
     }
-    pub fn compile_jit(&mut self, chunk_name: &str, chunk: &str, env: LuaTable) -> Result<LuaFunction, LuaError> {
+    pub fn compile_jit(&mut self, chunk_name: &str, chunk: &str, env: LuaTable) -> LuaResult<LuaFunction> {
         let v = Self::get_release_compiler()
             .compile(chunk)?;
         self.lua.enable_jit(true);
@@ -146,7 +157,7 @@ impl LuauState {
         self.lua.enable_jit(false);
         f
     }
-    pub fn compile_release(&mut self, chunk_name: &str, chunk: &str, env: LuaTable) -> Result<LuaFunction, LuaError> {
+    pub fn compile_release(&mut self, chunk_name: &str, chunk: &str, env: LuaTable) -> LuaResult<LuaFunction> {
         let v = Self::get_release_compiler()
             .compile(chunk)?;
         self.lua.load(v)
@@ -155,7 +166,7 @@ impl LuauState {
             .set_environment(env)
             .into_function()
     }
-    pub fn compile_debug(&mut self, chunk_name: &str, chunk: &str, env: LuaTable) -> Result<LuaFunction, LuaError> {
+    pub fn compile_debug(&mut self, chunk_name: &str, chunk: &str, env: LuaTable) -> LuaResult<LuaFunction> {
         let v = Self::get_debug_compiler()
             .compile(chunk)?;
         self.lua.load(v)
@@ -163,6 +174,25 @@ impl LuauState {
             .set_mode(ChunkMode::Binary)
             .set_environment(env)
             .into_function()
+    }
+    pub fn create_env_from_global(&mut self) -> LuaResult<LuaTable> {
+        let lua = self.get_lua();
+        let metatable = lua.create_table()?;
+        metatable.raw_set("__metatable", "env")?;
+        metatable.raw_set("__index", lua.globals())?;
+
+        let table = lua.create_table()?;
+        table.set_metatable(Some(metatable));
+
+        Ok(table)
+    }
+    pub fn get_task_scheduler_mut(&mut self) -> &mut dyn ITaskScheduler {
+        // SAFETY: The state must be initialized
+        unsafe { &mut **self.task.assume_init_mut() }
+    }
+    pub fn get_task_scheduler(&self) -> &dyn ITaskScheduler {
+        // SAFETY: The state must be initialized
+        unsafe { &**self.task.assume_init_ref() }
     }
 }
 
@@ -185,4 +215,10 @@ pub fn get_state(l: &Lua) -> &mut LuauState {
         state = reg.unwrap().0.cast::<LuauState>().as_mut().unwrap();
     }
     state
+}
+pub fn get_state_with_rwlock(l: &Lua) -> &RwLock<LuauState> {
+    let state = get_state(l);
+    let ptr = &raw mut *state;
+    let vm = state.get_vm();
+    vm.get_state_with_rwlock(ptr).map(|x| unsafe {&*x}).unwrap()
 }
