@@ -635,7 +635,14 @@ impl Div<i64> for Vector3int16 {
 
 impl From<NormalId> for Vector3 {
     fn from(value: NormalId) -> Self {
-        todo!()
+        match value {
+            NormalId::Back => Self::new(0.0, 0.0, -1.0),
+            NormalId::Bottom => Self::new(0.0, -1.0, 0.0),
+            NormalId::Front => Self::new(0.0, 0.0, 1.0),
+            NormalId::Left => Self::new(-1.0, 0.0, 0.0),
+            NormalId::Right => Self::new(1.0, 0.0, 0.0),
+            NormalId::Top => Self::new(0.0, 1.0, 0.0)
+        }
     }
 }
 impl From<Axis> for Vector3 {

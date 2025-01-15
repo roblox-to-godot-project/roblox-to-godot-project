@@ -6,5 +6,6 @@ mod model;
 
 pub use object::IObject;
 pub use pvinstance::PVInstanceComponent;
-pub use instance::{IInstance, ManagedInstance, WeakManagedInstance, InstanceComponent};
+pub use instance::{IInstance, ManagedInstance, WeakManagedInstance, InstanceComponent, DynInstance};
 pub use actor::{Actor, ManagedActor, WeakManagedActor};
+pub use model::{IModel, Model, ModelComponent};
