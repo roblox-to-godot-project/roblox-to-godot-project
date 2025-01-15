@@ -155,7 +155,7 @@ impl RobloxVM {
 impl Drop for RobloxVM {
     fn drop(&mut self) {
         if panicking() {
-            godot_print_rich!("[color=red][b]ERROR: RobloxVM:[/b] Abnormal exit (panicking() == true)[/color]\n[color=gray]\tat RobloxVM::drop() ({}:{})[/color]", file!(), line!());
+            godot_print_rich!("[color=red][b]ERROR: RobloxVM:[/b] Abnormal exit (panicking() == true)[/color]\n[color=gray]   at RobloxVM::drop() ({}:{})[/color]", file!(), line!());
         }
         self.states.clear();
         godot_print!("RobloxVM instance destroyed.");

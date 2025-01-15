@@ -21,6 +21,9 @@ macro_rules! lua_getter {
     (function, $lua: ident, $func: expr) => {
         Ok(mlua::Value::Function($lua.create_function($func)?))
     };
+    (function_async, $lua: ident, $func: expr) => {
+        Ok(mlua::Value::Function($lua.create_async_function($func)?))
+    };
 }
 macro_rules! lua_setter {
     ($lua: ident, $prop: expr, $value: ident) => {

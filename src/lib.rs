@@ -7,6 +7,9 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
+#![feature(breakpoint)]
+
+
 mod core;
 mod instance;
 mod userdata;
@@ -28,6 +31,9 @@ macro_rules! godot_debug {
             std::backtrace::Backtrace::force_capture()
         );
     };
+    (backtrace $thing:expr) => {
+        godot::prelude::godot_print_rich!("[color=gray]stack traceback:\n{}[/color]", $thing);
+    };
 }
 #[cfg(not(debug_assertions))]
 macro_rules! godot_debug {
@@ -48,6 +54,7 @@ unsafe impl ExtensionLibrary for RobloxToGodotProjectExtension {
     }
 
     fn on_level_init(level: InitLevel) {
+        
         match level {
             InitLevel::Scene => {
                 assert!({

@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, future::Future, mem::take, pin::P
 
 use mlua::prelude::*;
 use super::from_lua_clone_impl;
-use crate::core::{get_state_with_rwlock, get_task_scheduler_from_lua, LuauState, RwLock, Trc, TrcReadLock, TrcWriteLock, Weak};
+use crate::core::{get_state_with_rwlock, get_task_scheduler_from_lua, LuauState, ParallelDispatch, RwLock, Trc, TrcReadLock, TrcWriteLock, Weak};
 pub type ManagedRBXScriptSignal = Trc<RBXScriptSignal>;
 
 #[derive(Debug, Clone)]
@@ -10,12 +10,12 @@ pub struct RBXScriptConnection {
     id: usize,
     signal: ManagedRBXScriptSignal
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SignalCallback {
     func: LuaFunction,
     state: *const RwLock<LuauState>,
     once: bool,
-    parallel: bool
+    parallel: ParallelDispatch
 }
 #[derive(Debug)]
 pub struct RBXScriptSignal {
@@ -38,58 +38,52 @@ impl RBXScriptSignal {
     pub fn new() -> Trc<RBXScriptSignal> {
         Trc::new_cyclic(|x| RBXScriptSignal { callbacks: HashMap::default(), this_ptr: Some(x.clone()), id: 0 })
     }
-    pub fn connect(&mut self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
+    pub fn connect(&mut self, lua: &Lua, func: LuaFunction, parallel: ParallelDispatch) -> LuaResult<RBXScriptConnection> {
         let id = self.id;
         self.id += 1;
         self.callbacks.insert(id, SignalCallback {
             func,
             state: get_state_with_rwlock(lua),
             once: false,
-            parallel: false
+            parallel: parallel
         });
         Ok(RBXScriptConnection {
             id,
             signal: self.this_ptr.as_ref().unwrap().upgrade().unwrap()
         })
     }
+    #[inline]
     pub fn connect_parallel(&mut self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
-        let id = self.id;
-        self.id += 1;
-        self.callbacks.insert(id, SignalCallback {
-            func,
-            state: get_state_with_rwlock(lua),
-            once: false,
-            parallel: true
-        });
-        Ok(RBXScriptConnection {
-            id,
-            signal: self.this_ptr.as_ref().unwrap().upgrade().unwrap()
-        })
+        self.connect(lua, func, ParallelDispatch::Desynchronized)
     }
-    pub fn once(&mut self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
+    pub fn once(&mut self, lua: &Lua, func: LuaFunction, parallel: ParallelDispatch) -> LuaResult<RBXScriptConnection> {
         let id = self.id;
         self.id += 1;
         self.callbacks.insert(id, SignalCallback {
             func,
             state: get_state_with_rwlock(lua),
             once: true,
-            parallel: false
+            parallel: parallel
         });
         Ok(RBXScriptConnection {
             id,
             signal: self.this_ptr.as_ref().unwrap().upgrade().unwrap()
         })
     }
-    pub fn fire(&mut self, lua: &Lua, args: impl IntoLuaMulti) -> LuaResult<()> {
+    pub fn fire(mut self: TrcWriteLock<'_, RBXScriptSignal>, lua: &Lua, args: impl IntoLuaMulti) -> LuaResult<()> {
         let args = args.into_lua_multi(lua)?;
         let mut to_remove = Vec::new();
         let task = get_task_scheduler_from_lua(unsafe {(lua as *const Lua).as_ref().unwrap_unchecked()});
-        for (id, callback) in self.callbacks.iter() {
-            let _ = task.defer_func(lua, callback.func.clone(), args.clone(), callback.parallel);
+        let callbacks_clone = self.callbacks.clone();
+        let release = self.guard_release();
+        for (id, callback) in callbacks_clone {
+            //let _ = task.defer_func(lua, callback.func, args.clone(), callback.parallel);
+            let _ = task.spawn_func(lua, callback.func, args.clone());
             if callback.once {
-                to_remove.push(*id);
+                to_remove.push(id);
             }
         }
+        drop(release);
         if !to_remove.is_empty() {
             for i in to_remove {
                 self.callbacks.remove(&i);
@@ -143,7 +137,7 @@ impl Future for RBXScriptSignalFuture {
                     waker.clone().wake();
                     Ok(())
                 })?;
-                immut_borrow.event.write().once(&immut_borrow.lua, func)?;
+                immut_borrow.event.write().once(&immut_borrow.lua, func, ParallelDispatch::Default)?;
             }
             Poll::Pending
         }
@@ -152,13 +146,13 @@ impl Future for RBXScriptSignalFuture {
 impl LuaUserData for ManagedRBXScriptSignal {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("Connect", |lua, this, func: LuaFunction| {
-            this.write().connect(lua, func)
+            this.write().connect(lua, func, ParallelDispatch::Synchronized)
         });
         methods.add_method_mut("ConnectParallel", |lua, this, func: LuaFunction| {
             this.write().connect_parallel(lua, func)
         });
         methods.add_method_mut("Once", |lua, this, func: LuaFunction| {
-            this.write().once(lua, func)
+            this.write().once(lua, func, ParallelDispatch::Synchronized)
         });
         methods.add_async_method_mut("Wait", async |lua, this, ()| {
             this.read().wait(&lua).await

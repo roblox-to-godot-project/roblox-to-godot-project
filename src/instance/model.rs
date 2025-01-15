@@ -2,9 +2,9 @@ use mlua::prelude::*;
 
 use super::instance::IInstanceComponent;
 use super::pvinstance::IPVInstance;
-use super::{IInstance, IObject, InstanceComponent, ManagedInstance, PVInstanceComponent};
+use super::{DynInstance, IInstance, IObject, InstanceComponent, ManagedInstance, PVInstanceComponent, WeakManagedInstance};
 
-use crate::core::{IWeak, InheritanceBase, InheritanceTable, InheritanceTableBuilder, Irc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use crate::core::{InheritanceBase, InheritanceTable, InheritanceTableBuilder, Irc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::userdata::CFrame;
 use crate::userdata::enums::{ModelLevelOfDetail, ModelStreamingMode};
 
@@ -47,7 +47,9 @@ impl IObject for Model {
         }
     }
     fn lua_get(&self, lua: &Lua, name: String) -> LuaResult<LuaValue> {
-        todo!()
+        self.get_model_component().lua_get(self, lua, &name)
+            .or_else(|| self.get_pv_instance_component().lua_get(self, lua, &name))
+            .unwrap_or_else(|| self.get_instance_component().lua_get(lua, &name))
     }
     fn get_changed_signal(&self) -> crate::userdata::RBXScriptSignal {
         todo!()
@@ -65,7 +67,9 @@ impl IInstance for Model {
         self.instance.write().unwrap()
     }
     fn lua_set(&self, lua: &Lua, name: String, val: LuaValue) -> LuaResult<()> {
-        todo!()
+        self.get_model_component_mut().lua_set(self, lua, &name, &val)
+            .or_else(|| self.get_pv_instance_component_mut().lua_set(self, lua, &name, &val))
+            .unwrap_or_else(|| self.get_instance_component_mut().lua_set(lua, &name, &val))
     }
     fn clone_instance(&self) -> LuaResult<ManagedInstance> {
         todo!()
@@ -90,15 +94,27 @@ impl IModel for Model {
 }
 
 impl IInstanceComponent for ModelComponent {
-    fn lua_get(self: &mut RwLockReadGuard<'_, ModelComponent>, ptr: super::WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
-        todo!()
+    fn lua_get(self: &mut RwLockReadGuard<'_, ModelComponent>, _: &DynInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
+        match key.as_str() {
+            "LevelOfDetail" => todo!(),
+            "ModelStreamingMode" => todo!(),
+            "PrimaryPart" => todo!(),
+            "WorldPivot" => todo!(),
+            _ => None
+        }
     }
 
-    fn lua_set(self: &mut RwLockWriteGuard<'_, ModelComponent>, ptr: super::WeakManagedInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
-        todo!()
+    fn lua_set(self: &mut RwLockWriteGuard<'_, ModelComponent>, _: &DynInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
+        match key.as_str() {
+            "LevelOfDetail" => todo!(),
+            "ModelStreamingMode" => todo!(),
+            "PrimaryPart" => todo!(),
+            "WorldPivot" => todo!(),
+            _ => None
+        }
     }
 
-    fn clone(self: &RwLockReadGuard<'_, ModelComponent>, new_ptr: super::WeakManagedInstance) -> LuaResult<Self> {
+    fn clone(self: &RwLockReadGuard<'_, ModelComponent>, _: &WeakManagedInstance) -> LuaResult<Self> {
         todo!()
     }
 

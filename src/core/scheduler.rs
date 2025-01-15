@@ -9,6 +9,20 @@ pub struct TaskScheduler {
     delay_threads: [Vec<(LuaThread, u32, f64)>; 2],
     parallel_dispatch: bool
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ParallelDispatch {
+    Desynchronized,
+    Default,
+    Synchronized
+}
+
+impl Default for ParallelDispatch {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
 impl Default for TaskScheduler {
     fn default() -> Self {
         Self::new()
@@ -43,6 +57,14 @@ impl dyn ITaskScheduler {
     fn clock() -> f64 {
         unsafe { ffi::lua_clock() }
     }
+    #[inline(always)]
+    fn dispatch_to_table(&self, parallel: ParallelDispatch) -> usize {
+        (match parallel {
+            ParallelDispatch::Synchronized => false,
+            ParallelDispatch::Default => self.get_task_scheduler().parallel_dispatch,
+            ParallelDispatch::Desynchronized => true,
+        }) as usize
+    }
     pub fn spawn_func(&self, lua: &Lua, func: LuaFunction, args: impl IntoLuaMulti) -> LuaResult<LuaThread> {
         let thread = lua.create_thread(func)?;
         let _: LuaResult<()> = thread.resume(args);
@@ -52,12 +74,13 @@ impl dyn ITaskScheduler {
         let _ = thr.resume::<()>(());
         Ok(thr)
     }
-    pub fn defer_high_priority<F, A, R>(&mut self, lua: &Lua, args: impl IntoLuaMulti, parallel: bool, f: F) -> LuaResult<LuaThread> 
+    pub fn defer_high_priority<F, A, R>(&mut self, lua: &Lua, args: impl IntoLuaMulti, parallel: ParallelDispatch, f: F) -> LuaResult<LuaThread> 
     where
         F: FnMut(&Lua, A) -> LuaResult<R> + 'static,
         A: FromLuaMulti,
         R: IntoLuaMulti
     {
+        let parallel = self.dispatch_to_table(parallel);
         let func = lua.create_function_mut(f)?;
         let thread = lua.create_thread(func)?;
         let mut args_count: i32 = 0;
@@ -70,10 +93,11 @@ impl dyn ITaskScheduler {
                 ffi::lua_settop(lua_raw, 0); // clear stack
             })?;
         }
-        self.get_task_scheduler_mut().defer_threads[parallel as usize].insert(0, (thread.clone(), args_count as u32));
+        self.get_task_scheduler_mut().defer_threads[parallel].insert(0, (thread.clone(), args_count as u32));
         Ok(thread)
     }
-    pub fn defer_func(&mut self, lua: &Lua, func: LuaFunction, args: impl IntoLuaMulti, parallel: bool) -> LuaResult<LuaThread> {
+    pub fn defer_func(&mut self, lua: &Lua, func: LuaFunction, args: impl IntoLuaMulti, parallel: ParallelDispatch) -> LuaResult<LuaThread> {
+        let parallel = self.dispatch_to_table(parallel);
         let thread = lua.create_thread(func)?;
         let mut args_count: i32 = 0;
         unsafe { 
@@ -85,14 +109,16 @@ impl dyn ITaskScheduler {
                 ffi::lua_settop(lua_raw, 0); // clear stack
             })?;
         }
-        self.get_task_scheduler_mut().defer_threads[parallel as usize].push((thread.clone(), args_count as u32));
+        self.get_task_scheduler_mut().defer_threads[parallel].push((thread.clone(), args_count as u32));
         Ok(thread)
     }
-    pub fn defer_thread(&mut self, thread: LuaThread, parallel: bool) -> LuaResult<LuaThread> {
-        self.get_task_scheduler_mut().defer_threads[parallel as usize].push((thread.clone(), 0));
+    pub fn defer_thread(&mut self, thread: LuaThread, parallel: ParallelDispatch) -> LuaResult<LuaThread> {
+        let parallel = self.dispatch_to_table(parallel);
+        self.get_task_scheduler_mut().defer_threads[parallel].push((thread.clone(), 0));
         Ok(thread)
     }
-    pub fn delay_func(&mut self, lua: &Lua, func: LuaFunction, args: impl IntoLuaMulti, parallel: bool, seconds: f64) -> LuaResult<LuaThread> {
+    pub fn delay_func(&mut self, lua: &Lua, func: LuaFunction, args: impl IntoLuaMulti, parallel: ParallelDispatch, seconds: f64) -> LuaResult<LuaThread> {
+        let parallel = self.dispatch_to_table(parallel);
         let thread = lua.create_thread(func)?;
         let mut args_count: i32 = 0;
         unsafe { 
@@ -104,14 +130,16 @@ impl dyn ITaskScheduler {
                 ffi::lua_settop(lua_raw, 0); // clear stack
             })?;
         }
-        self.get_task_scheduler_mut().delay_threads[parallel as usize].push((thread.clone(), args_count as u32, Self::clock() + seconds));
+        self.get_task_scheduler_mut().delay_threads[parallel].push((thread.clone(), args_count as u32, Self::clock() + seconds));
         Ok(thread)
     }
-    pub fn delay_thread(&mut self, thread: LuaThread, parallel: bool, seconds: f64) -> LuaResult<LuaThread> {
-        self.get_task_scheduler_mut().delay_threads[parallel as usize].push((thread.clone(), 0, Self::clock() + seconds));
+    pub fn delay_thread(&mut self, thread: LuaThread, parallel: ParallelDispatch, seconds: f64) -> LuaResult<LuaThread> {
+        let parallel = self.dispatch_to_table(parallel);
+        self.get_task_scheduler_mut().delay_threads[parallel].push((thread.clone(), 0, Self::clock() + seconds));
         Ok(thread)
     }
     pub fn defer_single_cycle(&mut self, lua: &Lua, parallel: bool) -> LuaResult<bool> {
+        self.get_task_scheduler_mut().parallel_dispatch = parallel;
         let threads = take(&mut self.get_task_scheduler_mut().defer_threads[parallel as usize]);
         for (thread, args) in threads { unsafe {
             if thread.status() == LuaThreadStatus::Resumable {
@@ -126,6 +154,7 @@ impl dyn ITaskScheduler {
         Ok(!self.get_task_scheduler_mut().defer_threads[parallel as usize].is_empty())
     }
     pub fn delay_single_cycle(&mut self, lua: &Lua, parallel: bool) -> LuaResult<bool> {
+        self.get_task_scheduler_mut().parallel_dispatch = parallel;
         let threads = take(&mut self.get_task_scheduler_mut().delay_threads[parallel as usize]);
         let new_threads  = &mut self.get_task_scheduler_mut().delay_threads[parallel as usize];
         new_threads.reserve(threads.len());

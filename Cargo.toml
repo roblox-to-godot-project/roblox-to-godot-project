@@ -5,11 +5,15 @@ edition = "2021"
 authors = ["Radiant"]
 license = "Apache-2.0"
 
+[features]
+deadlock_detection = ["parking_lot/deadlock_detection"]
+
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
 godot = { version = "0.2.1", features = ["register-docs"] }
 mlua = { git = "https://github.com/RadiantUwU/mlua.git", branch = "edits", features = ["luau", "luau-jit", "macros", "async", "vendored"] }
+parking_lot = { version = "0.12.3", features = [] }
 rustversion = "1.0.19"
 rustversion-detect = "0.1.3"

@@ -9,7 +9,7 @@ use mlua::prelude::*;
 
 use crate::core::alloc::Allocator;
 use crate::core::lua_macros::lua_getter;
-use crate::core::{get_state, get_task_scheduler_from_lua, IWeak, Irc, IrcHead, RwLockReadGuard, RwLockWriteGuard};
+use crate::core::{get_state, get_task_scheduler_from_lua, IWeak, Irc, IrcHead, ParallelDispatch, RwLockReadGuard, RwLockWriteGuard};
 use crate::userdata::{ManagedRBXScriptSignal, RBXScriptSignal};
 
 use super::IObject;
@@ -23,9 +23,9 @@ pub trait IInstanceComponent: Sized {
     unsafe fn weak_to_strong_instance(ptr: WeakManagedInstance) -> ManagedInstance {
         ptr.upgrade().unwrap_unchecked()
     }
-    fn lua_get(self: &mut RwLockReadGuard<'_, Self>, ptr: WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>>;
-    fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, ptr: WeakManagedInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>>;
-    fn clone(self: &RwLockReadGuard<'_, Self>, new_ptr: WeakManagedInstance) -> LuaResult<Self>;
+    fn lua_get(self: &mut RwLockReadGuard<'_, Self>, ptr: &DynInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>>;
+    fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, ptr: &DynInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>>;
+    fn clone(self: &RwLockReadGuard<'_, Self>, new_ptr: &WeakManagedInstance) -> LuaResult<Self>;
     fn new(ptr: WeakManagedInstance, class_name: &'static str) -> Self;
 }
 
@@ -149,7 +149,7 @@ impl DynInstance {
             let p = _parent_instance.get_instance_component();
             let this_ptr = this._ptr.as_ref().unwrap().upgrade().unwrap();
             let _guard_release = this.guard_release();
-            if !DynInstance::guard_is_descendant_of(&p, this_ptr)? {
+            if DynInstance::guard_is_descendant_of(&p, this_ptr)? {
                 return Err(LuaError::RuntimeError("Invalid hierarchy while setting up instance tree.".into()))
             }
         }
@@ -171,9 +171,9 @@ impl DynInstance {
         if old_parent.is_some() {
             let _ptr_this = this._ptr.as_ref().unwrap().upgrade().unwrap();
             let _guard_release = this.guard_release();
-            old_parent.unwrap().upgrade().map(|inst|
-                inst.get_instance_component().child_removed.write().fire(lua, (_ptr_this,))
-            ).unwrap_or(Ok(()))?;
+            let old_parent = old_parent.unwrap().upgrade().unwrap();
+            old_parent.get_instance_component_mut().children.retain(|x| *x != _ptr_this);
+            old_parent.get_instance_component().child_removed.write().fire(lua, (_ptr_this,))?;
         }
 
         let descendants = DynInstance::guard_get_descendants(this)?;
@@ -189,8 +189,9 @@ impl DynInstance {
         if new_parent.is_some() {
             let ancestors = DynInstance::guard_get_ancestors(this);
             let _guard_release = this.guard_release();
-            
-            new_parent.unwrap().get_instance_component().child_added.write().fire(lua, (_ptr_this.clone(),))?;
+            let new_parent = new_parent.unwrap();
+            new_parent.get_instance_component_mut().children.push(_ptr_this.clone());
+            new_parent.get_instance_component().child_added.write().fire(lua, (_ptr_this.clone(),))?;
             for ancestor in ancestors {
                 ancestor.get_instance_component().descendant_added.write().fire(lua, (_ptr_this.clone(),))?;
             }
@@ -278,7 +279,7 @@ impl DynInstance {
         }
         {
             let signal = this.destroying.clone();
-            let mut destroying = signal.write();
+            let destroying = signal.write();
             
             let _guard_release = this.guard_release();
          
@@ -333,7 +334,7 @@ impl DynInstance {
         } else {
             let thread = lua.current_thread();
             if timeout.is_some() {
-                get_task_scheduler_from_lua(lua).delay_thread(thread.clone(), false, timeout.unwrap())?;
+                get_task_scheduler_from_lua(lua).delay_thread(thread.clone(), ParallelDispatch::Default, timeout.unwrap())?;
             }
             let i = self.get_instance_component().child_added.clone();
             let mut instance: ManagedInstance;
@@ -414,7 +415,16 @@ impl DynInstance {
         Ok(self.get_instance_component().attributes.get(&attribute).unwrap_or(&LuaNil).clone())
     }
     pub fn get_attribute_changed_signal(&self, attribute: String) -> LuaResult<ManagedRBXScriptSignal> {
-        todo!()
+        let read = self.get_instance_component();
+        if let Some(event) = read.attribute_changed_table.get(&attribute) {
+            Ok(event.clone())
+        } else {
+            drop(read);
+            let mut write = self.get_instance_component_mut();
+            let event = RBXScriptSignal::new();
+            write.attribute_changed_table.insert(attribute, event.clone());
+            Ok(event)
+        }
     }
     pub fn get_attributes(&self, lua: &Lua) -> LuaResult<LuaValue> {
         self.get_instance_component().attributes.clone().into_lua(lua)
@@ -432,7 +442,9 @@ impl DynInstance {
             if unsafe {read._ptr.as_ref().unwrap_unchecked() == this._ptr.as_ref().unwrap_unchecked()} {
                 return Ok(true);
             }
-            i = read.parent.as_ref().map(|x| x.upgrade()).flatten();
+            let new_i = read.parent.as_ref().map(|x| x.upgrade()).flatten();
+            drop(read);
+            i = new_i;
         }
         Ok(false)
     }
@@ -444,8 +456,13 @@ impl DynInstance {
         get_state(lua).get_vm().get_instance_tag_table().remove_tag(tag, &ptr);
         Ok(())
     }
-    pub fn set_attribute(&self, attribute: String, value: LuaValue) -> LuaResult<()> {
-        todo!()
+    pub fn set_attribute(&self, lua: &Lua, attribute: String, value: LuaValue) -> LuaResult<()> {
+        let mut write = self.get_instance_component_mut();
+        write.attributes.insert(attribute.clone(), value.clone());
+        let attribute_changed = write.attribute_changed.clone();
+        let attribute_changed_signal = write.attribute_changed_table.get(&attribute).cloned();
+        attribute_changed.write().fire(lua, (attribute,))?;
+        attribute_changed_signal.map(move |x| x.write().fire(lua, (value,))).unwrap_or(Ok(()))
     }
     
 }
@@ -492,11 +509,11 @@ impl PartialEq for DynInstance {
 impl Eq for DynInstance {}
 
 impl IInstanceComponent for InstanceComponent {
-    fn lua_get(self: &mut RwLockReadGuard<'_, Self>, _ptr: WeakManagedInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
+    fn lua_get(self: &mut RwLockReadGuard<'_, Self>, _: &DynInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
         Some(InstanceComponent::lua_get(self, lua, key))
     }
 
-    fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, _ptr: WeakManagedInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
+    fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, _: &DynInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
         Some(InstanceComponent::lua_set(self, lua, key, value))
     }
 
@@ -529,7 +546,7 @@ impl IInstanceComponent for InstanceComponent {
         };
         inst
     }
-    fn clone(self: &RwLockReadGuard<'_, Self>, ptr: WeakManagedInstance) -> LuaResult<Self> {
+    fn clone(self: &RwLockReadGuard<'_, Self>, ptr: &WeakManagedInstance) -> LuaResult<Self> {
         let mut new_children = Vec::new();
         for i in self.children.iter() {
             let inst = i.clone_instance();
@@ -545,7 +562,7 @@ impl IInstanceComponent for InstanceComponent {
             children: new_children,
             children_cache: HashMap::default(),
             children_cache_dirty: true,
-            _ptr: Some(ptr),
+            _ptr: Some(ptr.clone()),
             parent_locked: false,
 
             ancestry_changed: RBXScriptSignal::new(),
@@ -662,8 +679,7 @@ impl InstanceComponent {
             ),
             "GetStyled" => lua_getter!(function, lua,
                 |_, (_this,): (ManagedInstance,)| {
-                    todo!();
-                    Ok(())
+                    Err::<(), LuaError>(LuaError::RuntimeError("todo!(): function not yet implemented".into()))
                 }
             ),
             "GetTags" => lua_getter!(function, lua,
@@ -687,13 +703,12 @@ impl InstanceComponent {
                     this.remove_tag(lua, tag)
             ),
             "SetAttribute" => lua_getter!(function, lua,
-                |_, (this, attribute, value): (ManagedInstance, String, LuaValue)|
-                    this.set_attribute(attribute, value)
+                |lua, (this, attribute, value): (ManagedInstance, String, LuaValue)|
+                    this.set_attribute(lua, attribute, value)
             ),
-            "WaitForChild" => lua_getter!(function, lua,
-                |lua, (this, child, timeout): (ManagedInstance, String, Option<LuaNumber>)| {
-                    todo!();
-                    Ok(())
+            "WaitForChild" => lua_getter!(function_async, lua,
+                async |lua, (this, child, timeout): (ManagedInstance, String, Option<LuaNumber>)| {
+                    this.wait_for_child(&lua, child, timeout).await
                 }
             ),
             
@@ -732,21 +747,25 @@ impl InstanceComponent {
             self.children_cache.get(key).map(|x| x.upgrade()).flatten()
         }
     }
+    pub fn emit_property_changed(this: &impl IReadInstanceComponent, lua: &Lua, property: &'static str, value: &LuaValue) -> LuaResult<()> {
+        this.changed.write().fire(lua, (property,))?;
+        this.property_changed_table.get(property)
+            .map(|x| x.write().fire(lua, (value,)))
+            .unwrap_or(Ok(()))
+    }
 
     pub fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, lua: &Lua, key: &String, value: &LuaValue) -> LuaResult<()> {
         match key.as_str() {
             "Archivable" => {
                 self.archivable = value.as_boolean().ok_or(LuaError::RuntimeError("bad argument to setting Archivable".into()))?;
-                todo!("event emit signal");
-                Ok(())
+                Self::emit_property_changed(self, lua, "Archivable", value)
             },
             "Name" => {
                 self.name = value.as_string_lossy().ok_or(LuaError::RuntimeError("bad argument to setting Name".into()))?;
-                todo!("event emit signal");
-                Ok(())
+                Self::emit_property_changed(self, lua, "Name", value)
             },
             "Parent" => {
-                todo!();
+                DynInstance::guard_set_parent(self, lua, FromLua::from_lua(value.clone(), lua)?)
             },
             _ => Err(LuaError::RuntimeError(format!("can't set property {} on object of type Instance",key.as_str())))
         }

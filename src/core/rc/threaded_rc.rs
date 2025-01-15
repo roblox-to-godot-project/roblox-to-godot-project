@@ -7,6 +7,7 @@ use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::ptr::addr_eq;
 use std::ptr::drop_in_place;
 use std::ptr::write;
 use std::ptr::NonNull;
@@ -66,11 +67,13 @@ impl<T: RefUnwindSafe + ?Sized, A: Allocator + UnwindSafe> RefUnwindSafe for Wea
 
 impl<T: ?Sized, A: Allocator + Clone> Clone for Trc<T, A> {
     fn clone(&self) -> Self {
+        unsafe { self.increment_strong_count(); }
         Self { header: self.header.clone(), alloc: self.alloc.clone() }
     }
 }
 impl<T: ?Sized, A: Allocator + Clone> Clone for Weak<T, A> {
     fn clone(&self) -> Self {
+        unsafe { self.increment_weak_count() };
         Self { header: self.header.clone(), alloc: self.alloc.clone() }
     }
 }
@@ -167,7 +170,7 @@ impl<T, A: Allocator> Trc<T, A> {
             alloc
         };
         unsafe { 
-            this.access().write(value);
+            (&raw mut (head.as_ptr().as_mut().unwrap_unchecked().lock)).write(RwLock::new(ManuallyDrop::<T>::new(value)));
         }
         this
     }
@@ -181,8 +184,9 @@ impl<T, A: Allocator> Trc<T, A> {
             header: head,
             alloc
         };
+
         unsafe { 
-            this.access().write(data_fn(&this.downgrade()));
+            (&raw mut (head.as_ptr().as_mut().unwrap_unchecked().lock)).write(RwLock::new(ManuallyDrop::<T>::new(data_fn(&this.downgrade()))));
         }
         this
     }
@@ -194,6 +198,9 @@ impl<T, A: Allocator> Trc<T, A> {
             header: head,
             alloc
         };
+        unsafe { 
+            (&raw mut (head.as_ptr().as_mut().unwrap_unchecked().lock)).write(RwLock::new(ManuallyDrop::new(MaybeUninit::uninit())));
+        }
         this
     }
 }
@@ -208,12 +215,16 @@ impl<T: ?Sized, A: Allocator + Clone> Trc<T, A> {
 }
 impl<T: ?Sized, A: Allocator> Trc<T, A> {
     pub fn read<'a>(&'a self) -> TrcReadLock<'a, T, A> {
+        debug_assert!(self.weak_count() != 0);
+        debug_assert!(self.strong_count() != 0);
         TrcReadLock { 
             guard: unsafe { transmute(self.inner().lock.read().unwrap_or_else(|_|panic!("lock poisoned"))) },
             rc: &self
         }
     }
     pub fn write<'a>(&'a self) -> TrcWriteLock<'a, T, A> {
+        debug_assert!(self.weak_count() != 0);
+        debug_assert!(self.strong_count() != 0);
         TrcWriteLock { 
             guard: unsafe { transmute(self.inner().lock.write().unwrap_or_else(|_|panic!("lock poisoned"))) },
             rc: &self
@@ -353,6 +364,12 @@ impl<'a, T: ?Sized> TrcReadLock<'a, T> {
 impl<'a, T: ?Sized> TrcWriteLock<'a, T> {
     pub fn guard_release<'b>(&'b mut self) -> RwLockWriteReleaseGuard<'static, 'b, ManuallyDrop<T>> {
         self.guard.guard_release()
+    }
+}
+
+impl<T: ?Sized, A: Allocator> PartialEq for Trc<T, A> {
+    fn eq(&self, other: &Self) -> bool {
+        addr_eq(self.header.as_ptr(), other.header.as_ptr())
     }
 }
 
