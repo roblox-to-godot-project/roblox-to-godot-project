@@ -12,8 +12,9 @@ deadlock_detection = ["parking_lot/deadlock_detection"]
 crate-type = ["cdylib"]
 
 [dependencies]
+bevy_reflect = "0.15.1"
 godot = { version = "0.2.1", features = ["register-docs"] }
-mlua = { git = "https://github.com/RadiantUwU/mlua.git", branch = "edits", features = ["luau", "luau-jit", "macros", "async", "vendored"] }
+mlua = { git = "https://github.com/RadiantUwU/mlua.git", branch = "modified", features = ["luau", "luau-jit", "macros", "async", "vendored"] }
 parking_lot = { version = "0.12.3", features = [] }
 rustversion = "1.0.19"
 rustversion-detect = "0.1.3"

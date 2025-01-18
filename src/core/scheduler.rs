@@ -186,6 +186,9 @@ impl dyn ITaskScheduler {
         while self.delay_single_cycle(lua, parallel)? && !self.watchdog_check(lua) {}
         Ok(())
     }
+    pub fn is_desynchronized(&self) -> bool {
+        self.get_task_scheduler().parallel_dispatch
+    }
 }
 
 #[derive(Debug, Default)]
@@ -204,6 +207,8 @@ impl GlobalTaskScheduler {
             task: TaskScheduler::new()
         }
     }
+
+    
 }
 impl ITaskScheduler for GlobalTaskScheduler {
     fn get_task_scheduler(&self) -> &TaskScheduler {

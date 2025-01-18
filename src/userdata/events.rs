@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, future::Future, mem::take, pin::P
 
 use mlua::prelude::*;
 use super::from_lua_clone_impl;
-use crate::core::{get_state_with_rwlock, get_task_scheduler_from_lua, LuauState, ParallelDispatch, RwLock, Trc, TrcReadLock, TrcWriteLock, Weak};
+use crate::core::{get_state, get_state_with_rwlock, get_task_scheduler_from_lua, FastFlag, LuauState, ParallelDispatch, RwLock, Trc, TrcReadLock, TrcWriteLock, Weak};
 pub type ManagedRBXScriptSignal = Trc<RBXScriptSignal>;
 
 #[derive(Debug, Clone)]
@@ -76,9 +76,38 @@ impl RBXScriptSignal {
         let task = get_task_scheduler_from_lua(unsafe {(lua as *const Lua).as_ref().unwrap_unchecked()});
         let callbacks_clone = self.callbacks.clone();
         let release = self.guard_release();
+        let fire_behavior = get_state(lua).flags().get_int(FastFlag::SignalBehavior);
         for (id, callback) in callbacks_clone {
-            //let _ = task.defer_func(lua, callback.func, args.clone(), callback.parallel);
-            let _ = task.spawn_func(lua, callback.func, args.clone());
+            let _ = match fire_behavior {
+                0 | 1 | 3 => task.spawn_func(lua, callback.func, args.clone()),
+                2 => task.defer_func(lua, callback.func, args.clone(), callback.parallel),
+                _ => unreachable!()
+            };
+            if callback.once {
+                to_remove.push(id);
+            }
+        }
+        drop(release);
+        if !to_remove.is_empty() {
+            for i in to_remove {
+                self.callbacks.remove(&i);
+            }
+        }
+        Ok(())
+    }
+    pub fn fire_ancestry(mut self: TrcWriteLock<'_, RBXScriptSignal>, lua: &Lua, args: impl IntoLuaMulti) -> LuaResult<()> {
+        let args = args.into_lua_multi(lua)?;
+        let mut to_remove = Vec::new();
+        let task = get_task_scheduler_from_lua(unsafe {(lua as *const Lua).as_ref().unwrap_unchecked()});
+        let callbacks_clone = self.callbacks.clone();
+        let release = self.guard_release();
+        let fire_behavior = get_state(lua).flags().get_int(FastFlag::SignalBehavior);
+        for (id, callback) in callbacks_clone {
+            let _ = match fire_behavior {
+                0 | 1 => task.spawn_func(lua, callback.func, args.clone()),
+                2 | 3 => task.defer_func(lua, callback.func, args.clone(), callback.parallel),
+                _ => unreachable!()
+            };
             if callback.once {
                 to_remove.push(id);
             }

@@ -1,7 +1,7 @@
 use std::alloc::Layout;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
-use std::mem::{ManuallyDrop, MaybeUninit};
+use std::mem::{forget, ManuallyDrop, MaybeUninit};
 use std::ops::Deref;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::ptr::{addr_eq, NonNull};
@@ -75,6 +75,45 @@ impl<T: Sized + InheritanceBase> IrcHead<T> {
             data_ptr.write(data_fn(&weak));
         }
         ptr
+    }
+    fn new_cyclic_fallable<A, F, E>(data_fn: F, alloc: &A) -> Result<NonNull<Self>, E>
+    where 
+        F: FnOnce (&IWeak<T, A>) -> Result<T, E>,
+        A: Allocator + Clone
+    {
+        let mut ptr = alloc.allocate(Layout::new::<Self>()).unwrap().cast();
+        let data_ptr;
+        unsafe {
+            ptr.write(IrcHead::<T> {
+                layout: Layout::new::<T>(),
+                destroy: |data| {
+                    let t: *mut T = data as *mut T;
+                    t.drop_in_place();
+                },
+                strong: AtomicU32::new(1),
+                weak: AtomicU32::new(2),
+                base: null_mut(),
+                data: ManuallyDrop::new(MaybeUninit::uninit().assume_init())
+            });
+            ptr.as_ptr().as_mut().unwrap_unchecked().base = (&raw mut ptr.as_ptr().as_mut().unwrap_unchecked().data) as *mut T as *mut dyn InheritanceBase;
+            
+            data_ptr = (&raw mut ptr.as_mut().data).cast();
+        }
+        let weak = IWeak::<T, A> {
+            head: ptr,
+            ptr: data_ptr,
+            alloc: alloc.clone()
+        };
+        unsafe {
+            let val = data_fn(&weak);
+            if val.is_err() {
+                forget(weak);
+                alloc.deallocate(ptr.cast(), Layout::new::<Self>());
+                return Err(val.unwrap_err_unchecked());
+            }
+            data_ptr.write(val.unwrap_unchecked());
+        }
+        Ok(ptr)
     }
     fn new_uninit<A: Allocator>(alloc: &A) -> NonNull<IrcHead<MaybeUninit<T>>> {
         let ptr = alloc.allocate(Layout::new::<IrcHead<MaybeUninit<T>>>()).unwrap().cast();
@@ -229,6 +268,17 @@ where
             ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
             alloc: Global
         }
+    }
+    pub fn new_cyclic_fallable<F, E>(data_fn: F) -> Result<Self, E>
+    where
+        F: FnOnce(&IWeak<T>) -> Result<T, E>
+    {
+        let head = IrcHead::<T>::new_cyclic_fallable(data_fn, &Global)?;
+        Ok(Irc::<T> {
+            head,
+            ptr: unsafe { &raw const head.as_ref().data }.cast_mut().cast(),
+            alloc: Global
+        })
     }
     pub fn new_uninit() -> Irc<MaybeUninit<T>> {
         let head = IrcHead::<T>::new_uninit( &Global);

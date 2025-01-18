@@ -173,7 +173,7 @@ impl DynInstance {
             let _guard_release = this.guard_release();
             let old_parent = old_parent.unwrap().upgrade().unwrap();
             old_parent.get_instance_component_mut().children.retain(|x| *x != _ptr_this);
-            old_parent.get_instance_component().child_removed.write().fire(lua, (_ptr_this,))?;
+            old_parent.get_instance_component().child_removed.write().fire_ancestry(lua, (_ptr_this,))?;
         }
 
         let descendants = DynInstance::guard_get_descendants(this)?;
@@ -191,9 +191,9 @@ impl DynInstance {
             let _guard_release = this.guard_release();
             let new_parent = new_parent.unwrap();
             new_parent.get_instance_component_mut().children.push(_ptr_this.clone());
-            new_parent.get_instance_component().child_added.write().fire(lua, (_ptr_this.clone(),))?;
+            new_parent.get_instance_component().child_added.write().fire_ancestry(lua, (_ptr_this.clone(),))?;
             for ancestor in ancestors {
-                ancestor.get_instance_component().descendant_added.write().fire(lua, (_ptr_this.clone(),))?;
+                ancestor.get_instance_component().descendant_added.write().fire_ancestry(lua, (_ptr_this.clone(),))?;
             }
         }
         Ok(())
@@ -752,6 +752,20 @@ impl InstanceComponent {
         this.property_changed_table.get(property)
             .map(|x| x.write().fire(lua, (value,)))
             .unwrap_or(Ok(()))
+    }
+    pub fn get_property_changed_signal(self: &mut RwLockReadGuard<'_, Self>, property: String) -> LuaResult<ManagedRBXScriptSignal> {
+        let read = self.property_changed_table.get(&property);
+        if read.is_some() {
+            Ok(read.unwrap().clone())
+        } else {
+            let inst = self._ptr.as_ref().map(|x| x.upgrade()).flatten().unwrap();
+            let _release = self.guard_release();
+            
+            let mut write = inst.get_instance_component_mut();
+            let signal = RBXScriptSignal::new();
+            write.property_changed_table.insert(property, signal.clone());
+            Ok(signal)
+        }
     }
 
     pub fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, lua: &Lua, key: &String, value: &LuaValue) -> LuaResult<()> {

@@ -1,7 +1,7 @@
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
-use godot::builtin::math::{ApproxEq, FloatExt};
+use godot::builtin::math::FloatExt;
 use mlua::prelude::*;
 
 use super::enums::{Axis, NormalId};
@@ -98,8 +98,8 @@ impl Vector2 {
             y: self.y.min(other.y)
         }
     }
-    pub fn fuzzy_eq(&self, other: Vector2) -> bool {
-        self.x.approx_eq(&other.x) && self.y.approx_eq(&other.y)
+    pub fn fuzzy_eq(&self, other: Vector2, epsilon: f64) -> bool {
+        (self.x-other.x).abs() < epsilon && (self.y-other.y).abs() < epsilon
     }
 }
 
@@ -182,6 +182,16 @@ impl Div<f64> for Vector2 {
     }
 }
 
+impl Neg for Vector2 {
+    type Output = Vector2;
+    fn neg(self) -> Self::Output {
+        Self {
+            x: -self.x,
+            y: -self.y
+        }
+    }
+}
+
 impl Mul<f64> for Vector2int16 {
     type Output = Vector2int16;
     fn mul(self, rhs: f64) -> Self::Output {
@@ -218,6 +228,15 @@ impl Div<i64> for Vector2int16 {
         }
     }
 }
+impl Neg for Vector2int16 {
+    type Output = Vector2int16;
+    fn neg(self) -> Self::Output {
+        Self {
+            x: -self.x,
+            y: -self.y
+        }
+    }
+}
 
 from_lua_copy_impl!(Vector2);
 from_lua_copy_impl!(Vector2int16);
@@ -249,10 +268,9 @@ impl LuaUserData for Vector2 {
         methods.add_method("Lerp",|_, this, (other, alpha)| Ok(this.lerp(other, alpha)));
         methods.add_method("Max",|_, this, other| Ok(this.max(other)));
         methods.add_method("Min",|_, this, other| Ok(this.min(other)));
-        methods.add_method("FuzzyEq",|_, this, other: Vector2 | {
-            todo!();
-            Ok(())
-        });
+        methods.add_method("FuzzyEq",|_, this, (other, epsilon): (Vector2, f64)|
+            Ok(this.fuzzy_eq(other, epsilon))
+        );
         methods.add_meta_method("__add", |_, this, other| Ok(*this+other));
         methods.add_meta_method("__sub", |_, this, other| Ok(*this-other));
         methods.add_meta_method("__mul", |lua, this, val: LuaValue| {
@@ -311,6 +329,7 @@ impl LuaUserData for Vector2 {
         });
         methods.add_meta_method("__tostring", |_, this, ()| Ok(format!("({}, {})",this.x,this.y)));
         methods.add_meta_method("__eq", |_, this, other| Ok(*this == other));
+        methods.add_meta_method("__unm", |_, this, ()| Ok(-*this));
     }
 }
 
@@ -400,6 +419,8 @@ impl LuaUserData for Vector2int16 {
             }
         });
         methods.add_meta_method("__tostring", |_, this, ()| Ok(format!("({}, {})",this.x,this.y)));
+        methods.add_meta_method("__eq", |_, this, other| Ok(*this == other));
+        methods.add_meta_method("__unm", |_, this, ()| Ok(-*this));
     }
 }
 
@@ -420,6 +441,21 @@ impl LuaSingleton for Vector2int16 {
     }
 }
 
+impl From<[f64; 3]> for Vector3 {
+    fn from(value: [f64; 3]) -> Self {
+        Self {
+            x: value[0],
+            y: value[1],
+            z: value[2]
+        }
+    }
+}
+impl From<Vector3> for [f64; 3] {
+    fn from(value: Vector3) -> Self {
+        [value.x, value.y, value.z]
+    }
+}
+
 impl Vector3 {
     pub const ZERO: Vector3 = Vector3 { x: 0f64, y: 0f64, z: 0f64 };
     pub const ONE: Vector3 = Vector3 { x: 1f64, y: 1f64, z: 1f64 };
@@ -433,7 +469,10 @@ impl Vector3 {
         }
     }
     pub fn get_magnitude(&self) -> f64 {
-        (self.x*self.x + self.y * self.y + self.z * self.z).sqrt()
+        self.get_magnitude_squared().sqrt()
+    }
+    pub fn get_magnitude_squared(&self) -> f64 {
+        self.x*self.x + self.y * self.y + self.z * self.z
     }
     pub fn get_unit(&self) -> Vector3 {
         let magnitude = self.get_magnitude();
@@ -490,8 +529,8 @@ impl Vector3 {
     pub fn dot(&self, other: Vector3) -> f64 {
         self.x*other.x+self.y*other.y+self.z*other.z
     }
-    pub fn fuzzy_eq(&self, other: Vector3) -> bool {
-        self.x.approx_eq(&other.x)&&self.y.approx_eq(&other.y)&&self.z.approx_eq(&other.z)
+    pub fn fuzzy_eq(&self, other: Vector3, epsilon: f64) -> bool {
+        (self.x-other.x).abs() < epsilon && (self.y-other.y).abs() < epsilon && (self.z-other.z).abs() < epsilon
     }
     pub fn lerp(&self, other: Vector3, alpha: f64) -> Vector3 {
         *self+(other-*self)*alpha
@@ -591,7 +630,16 @@ impl Div<f64> for Vector3 {
         }
     }
 }
-
+impl Neg for Vector3 {
+    type Output = Vector3;
+    fn neg(self) -> Self::Output {
+        Self {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z
+        }
+    }
+}
 impl Mul<f64> for Vector3int16 {
     type Output = Vector3int16;
     fn mul(self, rhs: f64) -> Self::Output {
@@ -629,6 +677,16 @@ impl Div<i64> for Vector3int16 {
             x: self.x/rhs as i16,
             y: self.y/rhs as i16,
             z: self.z/rhs as i16
+        }
+    }
+}
+impl Neg for Vector3int16 {
+    type Output = Vector3int16;
+    fn neg(self) -> Self::Output {
+        Self {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z
         }
     }
 }
@@ -685,10 +743,9 @@ impl LuaUserData for Vector3 {
         methods.add_method("Lerp",|_, this, (other, alpha)| Ok(this.lerp(other, alpha)));
         methods.add_method("Max",|_, this, other| Ok(this.max(other)));
         methods.add_method("Min",|_, this, other| Ok(this.min(other)));
-        methods.add_method("FuzzyEq",|_, this, other: Vector3 | {
-            todo!();
-            Ok(())
-        });
+        methods.add_method("FuzzyEq",|_, this, (other, epsilon): (Vector3, f64)| 
+            Ok(this.fuzzy_eq(other, epsilon))
+        );
         methods.add_meta_method("__add", |_, this, other| Ok(*this+other));
         methods.add_meta_method("__sub", |_, this, other| Ok(*this-other));
         methods.add_meta_method("__mul", |lua, this, val: LuaValue| {
@@ -747,6 +804,7 @@ impl LuaUserData for Vector3 {
         });
         methods.add_meta_method("__tostring", |_, this, ()| Ok(format!("({}, {}, {})",this.x,this.y,this.z)));
         methods.add_meta_method("__eq", |_, this, other| Ok(*this == other));
+        methods.add_meta_method("__unm", |_, this, ()| Ok(-*this));
     }
 }
 
@@ -848,6 +906,8 @@ impl LuaUserData for Vector3int16 {
             }
         });
         methods.add_meta_method("__tostring", |_, this, ()| Ok(format!("({}, {}, {})",this.x,this.y,this.z)));
+        methods.add_meta_method("__eq", |_, this, other| Ok(*this == other));
+        methods.add_meta_method("__unm", |_, this, ()| Ok(-*this));
     }
 }
 
