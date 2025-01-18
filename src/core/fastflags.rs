@@ -22,6 +22,8 @@ pub enum FastFlag {
     PrivateServerOwnerId,     // int
 
     GlobalsReadonly,          // bool
+    IsClient,                 // bool
+    IsStudio,                 // bool
 
     SignalBehavior            // int
 }
@@ -66,7 +68,9 @@ impl FlagInternal {
     const fn get_bool(&self, flag: FastFlag) -> bool {
         match flag {
             FastFlag::VSync |
-            FastFlag::GlobalsReadonly => unsafe { self.bool_value },
+            FastFlag::GlobalsReadonly |
+            FastFlag::IsClient |
+            FastFlag::IsStudio => unsafe { self.bool_value },
             _ => panic!("Invalid flag")
         }
     }
@@ -106,7 +110,9 @@ impl FlagInternal {
     const fn set_bool(&mut self, flag: FastFlag, v: bool) {
         match flag {
             FastFlag::VSync |
-            FastFlag::GlobalsReadonly => self.bool_value = v,
+            FastFlag::GlobalsReadonly |
+            FastFlag::IsClient |
+            FastFlag::IsStudio => self.bool_value = v,
             _ => panic!("Invalid flag")
         }
     }
@@ -124,7 +130,9 @@ impl FlagInternal {
             FastFlag::TargetFPS |
             FastFlag::TargetPhysicsFPS => unsafe { FastFlagValue::Float(self.float_value) },
             FastFlag::VSync |
-            FastFlag::GlobalsReadonly => unsafe { FastFlagValue::Bool(self.bool_value) }
+            FastFlag::GlobalsReadonly |
+            FastFlag::IsClient |
+            FastFlag::IsStudio => unsafe { FastFlagValue::Bool(self.bool_value) }
         }
     }
 }
@@ -146,6 +154,8 @@ impl FastFlag {
             Self::PrivateServerOwnerId => FlagInternal { int_value: 0 },
 
             Self::GlobalsReadonly => FlagInternal { bool_value: false },
+            Self::IsClient => FlagInternal { bool_value: true },
+            Self::IsStudio => FlagInternal { bool_value: false },
             
             Self::SignalBehavior => FlagInternal { int_value: 0 }
         }

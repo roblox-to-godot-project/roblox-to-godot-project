@@ -26,7 +26,7 @@ impl Into<u8> for SecurityContext {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThreadIdentityType {
     ANON,
     USERINIT,

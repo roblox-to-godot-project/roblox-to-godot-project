@@ -5,7 +5,7 @@ use std::ptr::null_mut;
 use godot::global::godot_print;
 use mlua::{prelude::*, ChunkMode, Compiler};
 use super::scheduler::ITaskScheduler;
-use super::{FastFlag, FastFlags, RwLock, RwLockReadGuard, RwLockWriteGuard, TaskScheduler};
+use super::{FastFlag, FastFlags, RwLock, RwLockReadGuard, RwLockWriteGuard, TaskScheduler, Trc};
 use super::{security::ThreadIdentityType, vm::RobloxVM};
 use crate::userdata::register_userdata_singletons;
 
@@ -13,12 +13,12 @@ pub mod registry_keys {
     pub const VM_REGISTRYKEY: &'static str = "__vm__";
     pub const STATE_REGISTRYKEY: &'static str = "__state__";
 }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ThreadIdentity {
     pub security_identity: ThreadIdentityType,
     pub script: Option<()> // TODO: Add the type
 }
-
+#[derive(Debug)]
 pub struct LuauState {
     vm: *mut RwLock<RobloxVM>,
     lua: Lua,
@@ -245,7 +245,7 @@ pub fn get_state(l: &Lua) -> &mut LuauState {
     }
     state
 }
-pub fn get_state_with_rwlock(l: &Lua) -> &RwLock<LuauState> {
+pub fn get_state_with_rwlock(l: &Lua) -> &Trc<LuauState> {
     let state = get_state(l);
     let ptr = &raw mut *state;
     let vm = state.get_vm();

@@ -3,6 +3,7 @@ mod instance;
 mod actor;
 mod pvinstance;
 mod model;
+mod run_service;
 
 pub use object::IObject;
 pub use pvinstance::PVInstanceComponent;

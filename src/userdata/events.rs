@@ -13,7 +13,7 @@ pub struct RBXScriptConnection {
 #[derive(Debug, Clone)]
 struct SignalCallback {
     func: LuaFunction,
-    state: *const RwLock<LuauState>,
+    state: Trc<LuauState>,
     once: bool,
     parallel: ParallelDispatch
 }
@@ -43,7 +43,7 @@ impl RBXScriptSignal {
         self.id += 1;
         self.callbacks.insert(id, SignalCallback {
             func,
-            state: get_state_with_rwlock(lua),
+            state: get_state_with_rwlock(lua).clone(),
             once: false,
             parallel: parallel
         });
@@ -61,7 +61,7 @@ impl RBXScriptSignal {
         self.id += 1;
         self.callbacks.insert(id, SignalCallback {
             func,
-            state: get_state_with_rwlock(lua),
+            state: get_state_with_rwlock(lua).clone(),
             once: true,
             parallel: parallel
         });
