@@ -43,7 +43,6 @@ macro_rules! from_lua_clone_impl {
         }
     }
 }
-pub(self) use from_lua_copy_impl;
 pub(self) use from_lua_clone_impl;
 
 mod axes;

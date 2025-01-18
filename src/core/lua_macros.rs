@@ -25,11 +25,6 @@ macro_rules! lua_getter {
         Ok(mlua::Value::Function($lua.create_async_function($func)?))
     };
 }
-macro_rules! lua_setter {
-    ($lua: ident, $prop: expr, $value: ident) => {
-        todo!()
-    };
-}
 macro_rules! lua_invalid_argument {
     ($func_name: literal, $pos: expr, $arg_name: ident, $err: expr) => {
         LuaError::BadArgument { 
@@ -78,5 +73,4 @@ macro_rules! lua_invalid_argument {
 }
 
 pub(crate) use lua_getter;
-pub(crate) use lua_setter;
 pub(crate) use lua_invalid_argument;

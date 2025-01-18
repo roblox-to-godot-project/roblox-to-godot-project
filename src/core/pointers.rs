@@ -44,7 +44,7 @@ pub unsafe fn fat_to_thin_mut<T: ?Sized>(ptr: *mut T) -> *mut u8 {
 #[cfg(not(debug_assertions))]
 #[inline(always)]
 pub unsafe fn fat_to_metadata<T: ?Sized>(ptr: *const T) -> PtrMetadata {
-    transmute_unchecked_unsized(metadata(ptr))
+    transmute_unchecked(metadata(ptr))
 }
 #[cfg(debug_assertions)]
 #[inline(always)]

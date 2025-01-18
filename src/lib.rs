@@ -3,7 +3,6 @@
 #![feature(trait_upcasting)]
 #![feature(ptr_metadata)]
 #![feature(arbitrary_self_types)]
-#![feature(breakpoint)]
 #![feature(negative_impls)]
 #![feature(variant_count)]
 
@@ -12,9 +11,9 @@
 
 
 
-mod core;
-mod instance;
-mod userdata;
+pub mod core;
+pub mod instance;
+pub mod userdata;
 
 use godot::{classes::Engine, prelude::*};
 use rustversion_detect::RUST_VERSION;

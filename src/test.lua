@@ -26,9 +26,7 @@ local coro = coroutine.create(function(owo)
     print("coroutine!! :3",owo)
 end)
 coroutine.resume(coro,"uwu")
-for k,v in pairs(getmetatable(CFrame.new())) do
-    print(k, v)
-end
+print(getmetatable(CFrame.new()))
 local cframe = CFrame.new()
 local cframe_rel = CFrame.new(Vector3.new(5, 4, 9))
 local cframe_look_at = CFrame.new(cframe_rel.Position, Vector3.new(5, 0, 9))

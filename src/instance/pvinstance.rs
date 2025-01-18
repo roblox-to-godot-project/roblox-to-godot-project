@@ -64,10 +64,12 @@ pub trait IPVInstance: IInstance {
 
 impl dyn IPVInstance {
     pub fn get_pivot(&self) -> CFrame {
-        todo!()
+        let read = self.get_pv_instance_component();
+        read.origin * read.pivot_offset
     }
-    pub fn pivot_to(&mut self, pivot: CFrame)  {
-        todo!()
+    pub fn pivot_to(&self, pivot: CFrame)  {
+        let mut write = self.get_pv_instance_component_mut();
+        write.origin = pivot * write.pivot_offset.inverse();
     }
 }
 

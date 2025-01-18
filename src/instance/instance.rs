@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem::swap;
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -219,7 +220,9 @@ impl DynInstance {
         if this.unique_id != 0 {
             return Err(LuaError::RuntimeError("Instance::UniqueId was previously initialized.".into()));
         }
-        this.unique_id = (&raw const *this) as usize; // todo! hash pointer
+        let mut hasher = DefaultHasher::new();
+        (&raw const *this).hash(&mut hasher);
+        this.unique_id = hasher.finish() as usize;
         Ok(())
     }
     pub fn guard_set_uniqueid(this: &mut WriteInstanceComponent, value: usize) -> LuaResult<()> {
