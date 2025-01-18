@@ -5,7 +5,7 @@ use std::ptr::null_mut;
 use godot::global::godot_print;
 use mlua::{prelude::*, ChunkMode, Compiler};
 use super::scheduler::ITaskScheduler;
-use super::{RwLock, RwLockReadGuard, RwLockWriteGuard, TaskScheduler};
+use super::{FastFlag, FastFlags, RwLock, RwLockReadGuard, RwLockWriteGuard, TaskScheduler};
 use super::{security::ThreadIdentityType, vm::RobloxVM};
 use crate::userdata::register_userdata_singletons;
 
@@ -37,6 +37,10 @@ impl LuauState {
         }
     }
     fn thread_event_callback(lua: &Lua, event: LuaThreadEventInfo) -> Result<(), LuaError> {
+        let is_running = lua.gc_is_running();
+        if is_running {
+            lua.gc_stop();
+        }
         let state;
         unsafe {
             let reg: LuaLightUserData = lua.named_registry_value(registry_keys::STATE_REGISTRYKEY)?;
@@ -44,19 +48,21 @@ impl LuauState {
         }
         match event {
             LuaThreadEventInfo::Created(parent) => {
-                godot_print!("LuaThreadEventInfo::Created(child: thread: 0x{:x},parent: thread: 0x{:x})",lua.current_thread().to_pointer() as isize,parent.to_pointer() as isize);
+                godot_print!("[thread_events] new thread created: thread: 0x{:x} by thread: 0x{:x}",lua.current_thread().to_pointer() as isize,parent.to_pointer() as isize);
                 let iden = state.threads.get(&parent.to_pointer());
                 if iden.is_some() {
                     state.threads.insert(lua.current_thread().to_pointer(), iden.unwrap().clone());
                 }
-                Ok(())
             }
             LuaThreadEventInfo::Destroyed(thread_ptr) => {
-                godot_print!("LuaThreadEventInfo::Destroyed(thread: 0x{:x})",thread_ptr as isize);
+                godot_print!("[thread_events] thread destroyed: thread: 0x{:x}",thread_ptr as isize);
                 state.threads.remove(&thread_ptr);
-                Ok(())
             }
         }
+        if is_running {
+            lua.gc_restart();
+        }
+        Ok(())
     }
     unsafe fn _init(&mut self) {
         self.lua.set_named_registry_value(registry_keys::VM_REGISTRYKEY, LuaLightUserData(self.vm.cast())).unwrap();
@@ -75,8 +81,9 @@ impl LuauState {
         self.lua.sandbox(true).unwrap();
         self.lua.enable_jit(false);
         register_userdata_singletons(&mut self.lua).unwrap();
-        self.lua.globals().set_readonly(self.get_vm().are_globals_readonly());
+        self.lua.globals().set_readonly(self.flags().get_bool(FastFlag::GlobalsReadonly));
         self.lua.set_thread_event_callback(Self::thread_event_callback);
+        self.lua.gc_stop();
     }
     pub(super) unsafe fn init(&mut self, ptr: *mut RwLock<RobloxVM>, task: Box<dyn ITaskScheduler>) {
         self.vm = ptr;
@@ -186,13 +193,35 @@ impl LuauState {
 
         Ok(table)
     }
+    #[inline]
     pub fn get_task_scheduler_mut(&mut self) -> &mut dyn ITaskScheduler {
         // SAFETY: The state must be initialized
         unsafe { &mut **self.task.assume_init_mut() }
     }
+    #[inline]
     pub fn get_task_scheduler(&self) -> &dyn ITaskScheduler {
         // SAFETY: The state must be initialized
         unsafe { &**self.task.assume_init_ref() }
+    }
+    #[inline(always)]
+    pub const fn flags(&self) -> &'static FastFlags {
+        FastFlags::from_vm(self.vm)
+    }
+    pub fn gc(&self) {
+        self.lua.gc_restart();
+        self.lua.gc_collect().unwrap();
+        self.lua.gc_stop();
+    }
+    pub fn gc_step(&self, kb: i32) {
+        self.lua.gc_restart();
+        self.lua.gc_step_kbytes(kb).unwrap();
+        self.lua.gc_stop();
+    }
+}
+
+impl Drop for LuauState {
+    fn drop(&mut self) {
+        unsafe { self.task.assume_init_drop() };
     }
 }
 

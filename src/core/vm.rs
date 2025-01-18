@@ -1,5 +1,6 @@
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 use std::thread::panicking;
 use std::marker::PhantomPinned;
 
@@ -10,17 +11,16 @@ use mlua::prelude::*;
 use crate::core::scheduler::GlobalTaskScheduler;
 
 use super::state::LuauState;
-use super::{InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Watchdog};
+use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Watchdog};
 
 pub struct RobloxVM {
     main_state: RwLock<LuauState>,
     states: Vec<Option<RwLock<LuauState>>>,
     instances: InstanceReplicationTable,
     instances_tag_collection: InstanceTagCollectionTable,
+    flags: MaybeUninit<FastFlags>,
 
     states_locks: HashMap<*mut LuauState, *const RwLock<LuauState>>,
-    
-    sandbox_globals: bool, // todo! replace with fast flags
     
     hard_wd: Watchdog,
     soft_wd: Watchdog,
@@ -51,7 +51,7 @@ pub(crate) fn args_to_string(args: LuaMultiValue, delimiter: &str) -> String {
 }
 
 impl RobloxVM {
-    pub fn new(sandbox_globals: Option<bool>) -> Box<RwLock<RobloxVM>> {
+    pub fn new(flags_table: Option<Vec<(FastFlag, FastFlagValue)>>) -> Box<RwLock<RobloxVM>> {
         unsafe {
             let mut vm = Box::new(RwLock::new(RobloxVM {
                 main_state: RwLock::new(LuauState::new_uninit()),
@@ -59,12 +59,17 @@ impl RobloxVM {
                 states_locks: HashMap::new(),
                 instances: InstanceReplicationTable::default(),
                 instances_tag_collection: InstanceTagCollectionTable::default(),
-                sandbox_globals: sandbox_globals.unwrap_or(false),
                 hard_wd: Watchdog::new_timeout(10.0),
                 soft_wd: Watchdog::new_timeout(1.0/60.0),
-                _pin: PhantomPinned::default()
+                _pin: PhantomPinned::default(),
+                flags: MaybeUninit::uninit()
             }));
             let vm_ptr = &raw mut *vm;
+            vm.get_mut().flags.write(FastFlags::new(vm_ptr));
+            if let Some(table) = flags_table {
+                vm.get_mut().flags.assume_init_mut()
+                    .initialize_with_table(table);
+            }
             let main_state_ptr = vm.get_mut().main_state.access();
             let main_state_lock_ptr = &raw const vm.get_mut().main_state;
             vm.get_mut().states_locks.insert(main_state_ptr, main_state_lock_ptr);
@@ -73,10 +78,6 @@ impl RobloxVM {
             godot_print!("RobloxVM instance created.");
             vm
         }
-    }
-    #[inline]
-    pub fn are_globals_readonly(&self) -> bool {
-        self.sandbox_globals
     }
     pub fn log_message(&self, args: LuaMultiValue) {
         let v = args_to_variant(args);
@@ -147,8 +148,13 @@ impl RobloxVM {
         }
         self.soft_wd.check()
     }
+    #[inline(always)]
     pub(crate) fn get_instance_tag_table(&self) -> &InstanceTagCollectionTable {
         &self.instances_tag_collection
+    }
+    #[inline(always)]
+    pub(crate) const fn flags(&self) -> &FastFlags {
+        unsafe { self.flags.assume_init_ref() }
     }
 }
 
@@ -158,6 +164,7 @@ impl Drop for RobloxVM {
             godot_print_rich!("[color=red][b]ERROR: RobloxVM:[/b] Abnormal exit (panicking() == true)[/color]\n[color=gray]   at RobloxVM::drop() ({}:{})[/color]", file!(), line!());
         }
         self.states.clear();
+        unsafe { self.flags.assume_init_drop() };
         godot_print!("RobloxVM instance destroyed.");
     }
 }

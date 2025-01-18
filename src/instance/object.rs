@@ -1,14 +1,14 @@
 use mlua::prelude::*;
 
 use crate::core::InheritanceBase;
-use crate::userdata::RBXScriptSignal;
+use crate::userdata::ManagedRBXScriptSignal;
 
 pub trait IObject: InheritanceBase {
     fn lua_get(&self, lua: &Lua, name: String) -> LuaResult<LuaValue>;
     fn get_class_name(&self) -> &'static str;
-    fn get_property_changed_signal(&self, property: String) -> RBXScriptSignal;
+    fn get_property_changed_signal(&self, property: String) -> ManagedRBXScriptSignal;
     fn is_a(&self, class_name: &String) -> bool;
-    fn get_changed_signal(&self) -> RBXScriptSignal;
+    fn get_changed_signal(&self) -> ManagedRBXScriptSignal;
 }
 
 impl PartialEq for dyn IObject {

@@ -5,7 +5,7 @@ use super::pvinstance::IPVInstance;
 use super::{DynInstance, IInstance, IObject, InstanceComponent, ManagedInstance, PVInstanceComponent, WeakManagedInstance};
 
 use crate::core::{InheritanceBase, InheritanceTable, InheritanceTableBuilder, Irc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use crate::userdata::CFrame;
+use crate::userdata::{CFrame, ManagedRBXScriptSignal};
 use crate::userdata::enums::{ModelLevelOfDetail, ModelStreamingMode};
 
 #[derive(Debug)]
@@ -51,11 +51,11 @@ impl IObject for Model {
             .or_else(|| self.get_pv_instance_component().lua_get(self, lua, &name))
             .unwrap_or_else(|| self.get_instance_component().lua_get(lua, &name))
     }
-    fn get_changed_signal(&self) -> crate::userdata::RBXScriptSignal {
-        todo!()
+    fn get_changed_signal(&self) -> ManagedRBXScriptSignal {
+        self.get_instance_component().changed.clone()
     }
-    fn get_property_changed_signal(&self, property: String) -> crate::userdata::RBXScriptSignal {
-        todo!()
+    fn get_property_changed_signal(&self, property: String) -> ManagedRBXScriptSignal {
+        self.get_instance_component().get_property_changed_signal(property).unwrap()
     }
     fn get_class_name(&self) -> &'static str { "Model" }
 }
@@ -72,7 +72,14 @@ impl IInstance for Model {
             .unwrap_or_else(|| self.get_instance_component_mut().lua_set(lua, &name, &val))
     }
     fn clone_instance(&self) -> LuaResult<ManagedInstance> {
-        todo!()
+        Ok(Irc::new_cyclic_fallable::<_, LuaError>(|x| {
+            let i = x.cast_to_instance();
+            Ok(Model {
+                instance: RwLock::new(self.get_instance_component().clone(&i)?),
+                pvinstance: RwLock::new(self.get_pv_instance_component().clone(&i)?),
+                model: RwLock::new(self.get_model_component().clone(&i)?)
+            })
+        })?.cast_from_sized().unwrap())
     }
 }
 impl IPVInstance for Model {
@@ -115,10 +122,15 @@ impl IInstanceComponent for ModelComponent {
     }
 
     fn clone(self: &RwLockReadGuard<'_, ModelComponent>, _: &WeakManagedInstance) -> LuaResult<Self> {
-        todo!()
+        Ok(ModelComponent {
+            level_of_detail: self.level_of_detail,
+            model_streaming_mode: self.model_streaming_mode,
+            primary_part: None,
+            world_pivot: self.world_pivot
+        })
     }
 
-    fn new(ptr: super::WeakManagedInstance, class_name: &'static str) -> Self {
+    fn new(_: super::WeakManagedInstance, _: &'static str) -> Self {
         ModelComponent {
             level_of_detail: ModelLevelOfDetail::Automatic,
             model_streaming_mode: ModelStreamingMode::Default,

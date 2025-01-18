@@ -1,30 +1,21 @@
-use std::arch::breakpoint;
 use std::borrow::Borrow;
 use std::borrow::BorrowMut;
-use std::collections::VecDeque;
+use std::cell::UnsafeCell;
 use std::fmt::Debug;
-use std::mem::transmute;
-use std::mem::ManuallyDrop;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::ptr::drop_in_place;
+use std::ptr::null;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
 use parking_lot::lock_api::RawRwLock as IRawRwLock;
 use parking_lot::RawRwLock;
 
-use godot::global::godot_print_rich;
-
-#[cfg(debug_assertions)]
-use crate::godot_debug;
-#[cfg(debug_assertions)]
-use std::{sync::{Mutex, MutexGuard}, thread::{ThreadId, current}, backtrace::Backtrace};
-
 pub struct RwLock<T: ?Sized> {
     lock: RawRwLock,
     poisoned: AtomicBool,
-    data: T,
+    global_lock: *const AtomicBool,
+    data: UnsafeCell<T>,
 }
 impl<T: Debug> Debug for RwLock<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,17 +31,25 @@ impl<T: Default> Default for RwLock<T> {
         Self {
             lock: RawRwLock::INIT,
             poisoned: AtomicBool::new(false),
-            data: T::default()
+            data: UnsafeCell::default(),
+            global_lock: null()
         }
     }
 }
 
 pub struct RwLockReadGuard<'a, T: ?Sized> {
-    lock: &'a RwLock<T>
+    lock: &'a RwLock<T>,
+    holds_lock: bool
 }
 pub struct RwLockWriteGuard<'a, T: ?Sized> {
-    lock: &'a RwLock<T>
+    lock: &'a RwLock<T>,
+    holds_lock: bool
 }
+
+impl<'a, T: ?Sized> !Send for RwLockReadGuard<'a, T> {}
+impl<'a, T: ?Sized> !Send for RwLockWriteGuard<'a, T> {}
+impl<'a, 'b, T: ?Sized> !Send for RwLockReadReleaseGuard<'a, 'b, T> {}
+impl<'a, 'b, T: ?Sized> !Send for RwLockWriteReleaseGuard<'a, 'b, T> {}
 
 impl<'a, T: Debug> Debug for RwLockReadGuard<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,25 +97,20 @@ impl<T> RwLock<T> {
         RwLock {
             lock: RawRwLock::INIT,
             poisoned: AtomicBool::new(false),
-            data: value,
+            data: UnsafeCell::new(value),
+            global_lock: null()
         }
     }
     pub fn new_uninit() -> RwLock<MaybeUninit<T>> {
         RwLock {
             lock: RawRwLock::INIT,
-            data: MaybeUninit::uninit(),
-            poisoned: AtomicBool::new(false)
-        }
-    }
-    pub fn new_zeroed() -> RwLock<MaybeUninit<T>> {
-        RwLock {
-            lock: RawRwLock::INIT,
-            data: MaybeUninit::zeroed(),
-            poisoned: AtomicBool::new(false)
+            data: UnsafeCell::new(MaybeUninit::uninit()),
+            poisoned: AtomicBool::new(false),
+            global_lock: null()
         }
     }
     pub fn into_inner(self) -> T {
-        self.data
+        self.data.into_inner()
     }
 }
 impl<T> RwLock<MaybeUninit<T>> {
@@ -124,53 +118,74 @@ impl<T> RwLock<MaybeUninit<T>> {
     pub unsafe fn assume_init(self) -> RwLock<T> {
         RwLock {
             lock: RawRwLock::INIT,
-            data: self.data.assume_init(),
-            poisoned: AtomicBool::new(false)
+            data: UnsafeCell::new(self.data.into_inner().assume_init()),
+            poisoned: AtomicBool::new(false),
+            global_lock: self.global_lock
         }
     }
 }
 
 impl<T: ?Sized> RwLock<T> {
-    #[inline]
-    pub unsafe fn access(&self) -> *mut T {
-        (&raw const self.data).cast_mut()
+    #[inline(always)]
+    pub const unsafe fn access(&self) -> *mut T {
+        self.data.get()
     }
+    #[inline]
     pub fn read<'a>(&'a self) -> LockResult<RwLockReadGuard<'a, T>> {
         // todo!("make these functions check the poison flag")
-        self.lock.lock_shared();
+        let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
+        if holds_lock {
+            self.lock.lock_shared();
+        }
         Ok(RwLockReadGuard {
-            lock: self
+            lock: self,
+            holds_lock
         })
         }
+    #[inline]
     pub fn try_read<'a>(&'a self) -> TryLockResult<RwLockReadGuard<'a, T>> {
-        if !self.lock.try_lock_shared() {
+        let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
+        if !holds_lock || self.lock.try_lock_shared() {
             Ok(RwLockReadGuard {
-                lock: self
+                lock: self,
+                holds_lock
             })
         } else {
             Err(TryLockError::WouldBlock)
         }
     }
+    #[inline]
     pub fn write<'a>(&'a self) -> LockResult<RwLockWriteGuard<'a, T>> {
-        self.lock.lock_exclusive();
-        Ok(RwLockWriteGuard { lock: self })
+        let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
+        if holds_lock {
+            self.lock.lock_exclusive();
         }
+        Ok(RwLockWriteGuard {
+            lock: self,
+            holds_lock
+        })
+    }
+    #[inline]
     pub fn try_write<'a>(&'a self) -> TryLockResult<RwLockWriteGuard<'a, T>> {
-        if self.lock.try_lock_exclusive() {
-            Ok(RwLockWriteGuard { lock: self })
+        let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
+        if !holds_lock || self.lock.try_lock_exclusive() {
+            Ok(RwLockWriteGuard {
+                lock: self,
+                holds_lock
+            })
         } else {
             Err(TryLockError::WouldBlock)
         }
     }
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        &mut self.data
+    #[inline(always)]
+    pub const fn get_mut(&mut self) -> &mut T {
+        self.data.get_mut()
     }
-    #[inline]
+    #[inline(always)]
     pub fn is_poisoned(&self) -> bool {
         self.poisoned.load(Relaxed)
     }
-    #[inline]
+    #[inline(always)]
     pub fn clear_poison(&self) {
         self.poisoned.store(false, Relaxed);
     }
@@ -178,38 +193,50 @@ impl<T: ?Sized> RwLock<T> {
 
 impl<'a, T: ?Sized> RwLockReadGuard<'a, T> {
     pub fn guard_release<'b>(&'b mut self) -> RwLockReadReleaseGuard<'a, 'b, T> {
-        // SAFETY: Restored when dropping release guard
-        unsafe { self.lock.lock.unlock_shared() };
+        if self.holds_lock {
+            // SAFETY: Restored when dropping release guard
+            unsafe { self.lock.lock.unlock_shared() };
+        }
         RwLockReadReleaseGuard { guard: self }
     }
 }
 impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
     pub fn guard_release<'b>(&'b mut self) -> RwLockWriteReleaseGuard<'a, 'b, T> {
-        // SAFETY: Restored when dropping release guard
-        unsafe { self.lock.lock.unlock_exclusive() };
+        if self.holds_lock {
+            // SAFETY: Restored when dropping release guard
+            unsafe { self.lock.lock.unlock_exclusive() };
+        }
         RwLockWriteReleaseGuard { guard: self }
     }
 }
 
 impl<'a, 'b, T: ?Sized> Drop for RwLockReadReleaseGuard<'a, 'b, T> {
     fn drop(&mut self) {
-        self.guard.lock.lock.lock_shared();
+        if self.guard.holds_lock {
+            self.guard.lock.lock.lock_shared();
+        }
     }
 }
 impl<'a, 'b, T: ?Sized> Drop for RwLockWriteReleaseGuard<'a, 'b, T> {
     fn drop(&mut self) {
-        self.guard.lock.lock.lock_exclusive();
+        if self.guard.holds_lock {
+            self.guard.lock.lock.lock_exclusive();
+        }
     }
 }
 
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
     fn drop(&mut self) {
-        unsafe { self.lock.lock.unlock_shared() };
+        if self.holds_lock {
+            unsafe { self.lock.lock.unlock_shared() };
+        }
     }
 }
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
-        unsafe { self.lock.lock.unlock_exclusive() };
+        if self.holds_lock {
+            unsafe { self.lock.lock.unlock_exclusive() };
+        }
     }
 }
 
@@ -217,39 +244,39 @@ impl<'a, T: ?Sized> Deref for RwLockReadGuard<'a, T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.lock.data
+        unsafe { &*self.lock.data.get() }
     }
 }
 impl<'a, T: ?Sized> Deref for RwLockWriteGuard<'a, T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.lock.data
+        unsafe { &*self.lock.data.get() }
     }
 }
 impl<'a, T: ?Sized> DerefMut for RwLockWriteGuard<'a, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.lock.access().as_mut().unwrap_unchecked() } 
+        unsafe { &mut *self.lock.data.get() }
     }
 }
 
 impl<'a, T: ?Sized> Borrow<T> for RwLockReadGuard<'a, T> {
     #[inline]
     fn borrow(&self) -> &T {
-        &self.lock.data
+        unsafe {&*self.lock.data.get()}
     }
 }
 impl<'a, T: ?Sized> Borrow<T> for RwLockWriteGuard<'a, T> {
     #[inline]
     fn borrow(&self) -> &T {
-        &self.lock.data
+        unsafe {&*self.lock.data.get()}
     }
 }
 impl<'a, T: ?Sized> BorrowMut<T> for RwLockWriteGuard<'a, T> {
     #[inline]
     fn borrow_mut(&mut self) -> &mut T {
-        unsafe { self.lock.access().as_mut().unwrap_unchecked() } 
+        unsafe { &mut*self.lock.data.get() } 
     }
 }
 impl<T> PoisonError<T> {

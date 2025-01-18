@@ -39,13 +39,25 @@ macro_rules! lua_invalid_argument {
             cause: Arc::new($err)
         }
     };
-    ($func_name: literal, $pos: expr, $arg_name: ident, cast, $to: ident) => {
+    ($func_name: literal, $pos: expr, $arg_name: ident cast to $to: ident) => {
         LuaError::BadArgument { 
             to: Some($func_name.into()),
             pos: $pos,
             name: Some(stringify!($arg_name).into()),
             cause: Arc::new(LuaError::FromLuaConversionError {
                 from: $arg_name.type_name(),
+                to: stringify!($to).into(),
+                message: None
+            })
+        }
+    };
+    ($func_name: literal, $pos: expr, $arg_name: ident cast unknown to $to: ident) => {
+        LuaError::BadArgument { 
+            to: Some($func_name.into()),
+            pos: $pos,
+            name: Some(stringify!($arg_name).into()),
+            cause: Arc::new(LuaError::FromLuaConversionError {
+                from: "",
                 to: stringify!($to).into(),
                 message: None
             })

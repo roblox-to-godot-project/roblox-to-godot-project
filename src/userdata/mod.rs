@@ -64,6 +64,7 @@ use crate::instance::ManagedInstance;
 
 pub fn register_userdata_singletons(lua: &mut Lua) -> LuaResult<()> {
     Axes::register_singleton(lua)?;
+    CFrame::register_singleton(lua)?;
 
     Vector2::register_singleton(lua)?;
     Vector2int16::register_singleton(lua)?;

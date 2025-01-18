@@ -3,11 +3,13 @@
 #![feature(trait_upcasting)]
 #![feature(ptr_metadata)]
 #![feature(arbitrary_self_types)]
+#![feature(breakpoint)]
+#![feature(negative_impls)]
+#![feature(variant_count)]
 
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
-#![feature(breakpoint)]
 
 
 mod core;
