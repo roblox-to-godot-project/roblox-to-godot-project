@@ -9,16 +9,19 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
-
+#[rustversion::not(nightly)]
+compile_error!("This crate can only be built with nightly rust due to the use of unstable features.");
 
 pub mod core;
 pub mod instance;
 pub mod userdata;
 mod godot_vm_bindings;
 
+use core::verify_gdext_api_compat;
+
 pub use godot_vm_bindings::RobloxVMNode;
 
-use godot::{classes::Engine, prelude::*};
+use godot::prelude::*;
 use rustversion_detect::RUST_VERSION;
 
 #[cfg(debug_assertions)]
@@ -58,11 +61,7 @@ unsafe impl ExtensionLibrary for RobloxToGodotProjectExtension {
         
         match level {
             InitLevel::Scene => {
-                assert!({
-                    let v = (*Engine::singleton()).get_copyright_info().at(0).get("name").unwrap();
-                    let s = String::from(v.stringify());
-                    s.starts_with("Godot")
-                }, "incompatible gdextension api header"); // Make sure the header won't randomly break at runtime.
+                verify_gdext_api_compat();
                 godot_print!("Roblox To Godot Project v{} (Rust runtime v{}) by {}\n", env!("CARGO_PKG_VERSION"), RUST_VERSION, {
                     let authors: &'static str = env!("CARGO_PKG_AUTHORS");
                     authors.replace(":", ", ")

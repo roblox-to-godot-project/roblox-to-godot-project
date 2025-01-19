@@ -12,9 +12,11 @@ mod rw_lock;
 mod watchdog;
 mod fastflags;
 pub mod lua_macros;
+mod assert_gdext_api;
 
 pub(self) use instance_tag_collection::InstanceTagCollectionTable;
 pub(self) use instance_repl_table::InstanceReplicationTable;
+pub(crate) use assert_gdext_api::verify_gdext_api_compat;
 pub use inheritance::*;
 pub use rc::*;
 pub use vm::RobloxVM;
