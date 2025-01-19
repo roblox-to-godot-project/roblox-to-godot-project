@@ -17,5 +17,18 @@
                 "process launch"
             ]
         },
+        {
+            "type": "lldb",
+            "request": "custom",
+            "name": "Debug & Run Editor",
+            "targetCreateCommands": [
+                "command source ${workspaceFolder}/commands.lldb",
+                "target create ${workspaceFolder}/godot/godot.editor"
+            ],
+            "processCreateCommands": [
+                "settings set -- target.run-args \"--path\" \"./godot\" \"--editor\"",
+                "process launch"
+            ]
+        },
     ]
 }

@@ -1,6 +1,6 @@
 use std::{cell::UnsafeCell, mem::{transmute, variant_count, ManuallyDrop, MaybeUninit}};
 
-use bevy_reflect::Reflect;
+use bevy_reflect::{Reflect, TypeInfo};
 
 use super::{LuauState, RobloxVM, RwLock};
 
@@ -14,7 +14,9 @@ pub enum FastFlag {
     MaxPhysicsStepsPerFrame,  // int
 
     GameId,                   // int
+    GameName,                 // string
     CreatorId,                // int
+    CreatorType,              // int
     PlaceId,                  // int
     JobId,                    // string
     PlaceVersion,             // int
@@ -22,6 +24,8 @@ pub enum FastFlag {
     PrivateServerOwnerId,     // int
 
     GlobalsReadonly,          // bool
+    IsClient,                 // bool
+    IsStudio,                 // bool
 
     SignalBehavior            // int
 }
@@ -37,7 +41,8 @@ impl FlagInternal {
     fn get_string(&self, flag: FastFlag) -> String {
         match flag {
             FastFlag::JobId |
-            FastFlag::PrivateServerId => unsafe { String::clone(&self.str_value) },
+            FastFlag::PrivateServerId |
+            FastFlag::GameName => unsafe { String::clone(&self.str_value) },
             _ => panic!("Invalid flag")
         }
     }
@@ -66,7 +71,9 @@ impl FlagInternal {
     const fn get_bool(&self, flag: FastFlag) -> bool {
         match flag {
             FastFlag::VSync |
-            FastFlag::GlobalsReadonly => unsafe { self.bool_value },
+            FastFlag::GlobalsReadonly |
+            FastFlag::IsClient |
+            FastFlag::IsStudio => unsafe { self.bool_value },
             _ => panic!("Invalid flag")
         }
     }
@@ -74,7 +81,8 @@ impl FlagInternal {
     fn set_string(&mut self, flag: FastFlag, v: String) {
         match flag {
             FastFlag::JobId |
-            FastFlag::PrivateServerId => unsafe {
+            FastFlag::PrivateServerId |
+            FastFlag::GameName => unsafe {
                 ManuallyDrop::drop(&mut self.str_value);
                 self.str_value = ManuallyDrop::new(v);
             }
@@ -87,6 +95,7 @@ impl FlagInternal {
             FastFlag::MaxPhysicsStepsPerFrame |
             FastFlag::GameId |
             FastFlag::CreatorId |
+            FastFlag::CreatorType |
             FastFlag::PlaceId |
             FastFlag::PlaceVersion |
             FastFlag::PrivateServerOwnerId |
@@ -106,17 +115,21 @@ impl FlagInternal {
     const fn set_bool(&mut self, flag: FastFlag, v: bool) {
         match flag {
             FastFlag::VSync |
-            FastFlag::GlobalsReadonly => self.bool_value = v,
+            FastFlag::GlobalsReadonly |
+            FastFlag::IsClient |
+            FastFlag::IsStudio => self.bool_value = v,
             _ => panic!("Invalid flag")
         }
     }
     fn get_value(&self, flag: FastFlag) -> FastFlagValue {
         match flag {
             FastFlag::JobId |
+            FastFlag::GameName |
             FastFlag::PrivateServerId => unsafe { FastFlagValue::String(String::clone(&self.str_value)) },
             FastFlag::MaxPhysicsStepsPerFrame |
             FastFlag::GameId |
             FastFlag::CreatorId |
+            FastFlag::CreatorType |
             FastFlag::PlaceId |
             FastFlag::PlaceVersion |
             FastFlag::PrivateServerOwnerId |
@@ -124,7 +137,9 @@ impl FlagInternal {
             FastFlag::TargetFPS |
             FastFlag::TargetPhysicsFPS => unsafe { FastFlagValue::Float(self.float_value) },
             FastFlag::VSync |
-            FastFlag::GlobalsReadonly => unsafe { FastFlagValue::Bool(self.bool_value) }
+            FastFlag::GlobalsReadonly |
+            FastFlag::IsClient |
+            FastFlag::IsStudio => unsafe { FastFlagValue::Bool(self.bool_value) }
         }
     }
 }
@@ -138,7 +153,9 @@ impl FastFlag {
             Self::MaxPhysicsStepsPerFrame => FlagInternal { int_value: 8 },
             
             Self::GameId => FlagInternal { int_value: 0 },
+            Self::GameName => FlagInternal { str_value: ManuallyDrop::new(String::from("RobloxToGodotProject")) },
             Self::CreatorId => FlagInternal { int_value: 0 },
+            Self::CreatorType => FlagInternal { int_value: 0 },
             Self::PlaceId => FlagInternal { int_value: 0 },
             Self::JobId => FlagInternal { str_value: ManuallyDrop::new(String::new()) },
             Self::PlaceVersion => FlagInternal { int_value: 1 },
@@ -146,8 +163,18 @@ impl FastFlag {
             Self::PrivateServerOwnerId => FlagInternal { int_value: 0 },
 
             Self::GlobalsReadonly => FlagInternal { bool_value: false },
+            Self::IsClient => FlagInternal { bool_value: true },
+            Self::IsStudio => FlagInternal { bool_value: false },
             
             Self::SignalBehavior => FlagInternal { int_value: 0 }
+        }
+    }
+    pub fn get_default(self) -> FastFlagValue {
+        self.default_value().get_value(self)
+    }
+    pub fn get_enum_flag_info(self) -> Option<TypeInfo> {
+        match self {
+            _ => None
         }
     }
 }
@@ -262,18 +289,13 @@ impl FastFlags {
         }
         self.get_flag_mut_internal(flag).set_bool(flag, v)
     }
-    pub fn initialize_with_table<'a>(&self, table: Vec<(FastFlag, FastFlagValue)>) {
-        unsafe {
-            assert!(!self.vm.as_ref().unwrap_unchecked()
-                .access().as_mut().unwrap_unchecked()
-                .get_main_state().get_task_scheduler().is_desynchronized());
-        }
+    pub(super) fn initialize_with_table<'a>(&mut self, table: Vec<(FastFlag, FastFlagValue)>) {
         for (flag, value) in table {
             match value {
-                FastFlagValue::Bool(v) => self.set_bool(flag, v),
-                FastFlagValue::Int(v) => self.set_int(flag, v),
-                FastFlagValue::Float(v) => self.set_float(flag, v),
-                FastFlagValue::String(v) => self.set_string(flag, v)
+                FastFlagValue::Bool(v) => self.get_flag_mut_internal(flag).set_bool(flag, v),
+                FastFlagValue::Int(v) => self.get_flag_mut_internal(flag).set_int(flag, v),
+                FastFlagValue::Float(v) => self.get_flag_mut_internal(flag).set_float(flag, v),
+                FastFlagValue::String(v) => self.get_flag_mut_internal(flag).set_string(flag, v)
             }
         }
     }

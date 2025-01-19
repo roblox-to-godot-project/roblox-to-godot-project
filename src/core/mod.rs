@@ -20,7 +20,7 @@ pub use rc::*;
 pub use vm::RobloxVM;
 pub use rw_lock::*;
 pub use state::{LuauState, registry_keys, get_current_identity, get_state, get_state_with_rwlock};
-pub use scheduler::{ITaskScheduler, TaskScheduler, get_task_scheduler_from_lua, ParallelDispatch};
+pub use scheduler::{ITaskScheduler, TaskScheduler, get_task_scheduler_from_lua, ParallelDispatch, GlobalTaskScheduler};
 pub use security::*;
 pub use fastflags::*;
 pub(self) use pointers::*;

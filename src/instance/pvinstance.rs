@@ -1,8 +1,7 @@
-use std::sync::Arc;
-
-use crate::{core::{inheritance_cast_to, lua_macros::lua_invalid_argument, RwLockReadGuard, RwLockWriteGuard}, userdata::CFrame};
 use mlua::prelude::*;
 
+use crate::core::{inheritance_cast_to, lua_macros::lua_invalid_argument, RwLockReadGuard, RwLockWriteGuard};
+use crate::userdata::CFrame;
 use super::{instance::IInstanceComponent, DynInstance, IInstance, ManagedInstance, WeakManagedInstance};
 
 #[derive(Debug)]
@@ -29,7 +28,7 @@ impl IInstanceComponent for PVInstanceComponent {
             "PivotTo" => Some(Ok(LuaValue::Function(lua.create_function(|_, (this, cf): (ManagedInstance,CFrame)| {
                 let i = inheritance_cast_to!(&*this, dyn IPVInstance);
                 i
-                    .map(|x| x.get_pivot())
+                    .map(|x| x.pivot_to(cf))
                     .map_err(|_|
                         lua_invalid_argument!("PVInstance::PivotTo",1,self cast Instance to PVInstance)
                     )

@@ -14,6 +14,9 @@
 pub mod core;
 pub mod instance;
 pub mod userdata;
+mod godot_vm_bindings;
+
+pub use godot_vm_bindings::RobloxVMNode;
 
 use godot::{classes::Engine, prelude::*};
 use rustversion_detect::RUST_VERSION;
@@ -43,9 +46,6 @@ macro_rules! godot_debug {
 }
 pub(crate) use godot_debug;
 
-
-use core::RobloxVM;
-
 struct RobloxToGodotProjectExtension;
 
 #[gdextension]
@@ -67,12 +67,14 @@ unsafe impl ExtensionLibrary for RobloxToGodotProjectExtension {
                     let authors: &'static str = env!("CARGO_PKG_AUTHORS");
                     authors.replace(":", ", ")
                 });
+                /*
                 let mut roblox_vm = RobloxVM::new(None);
                 let env = roblox_vm.get_mut().get_main_state().create_env_from_global().unwrap();
                 roblox_vm.get_mut()
                     .get_main_state()
                     .compile_jit("test.lua", include_str!("test.lua"), env).unwrap()
                     .call::<()>(()).unwrap();
+                */
                 
             }
             _ => ()

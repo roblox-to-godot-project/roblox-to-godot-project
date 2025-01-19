@@ -9,18 +9,20 @@ use godot::{builtin::Variant, global::{godot_print, print_rich, printt}, meta::T
 use mlua::prelude::*;
 
 use crate::core::scheduler::GlobalTaskScheduler;
+use crate::instance::{DataModel, ManagedInstance};
 
 use super::state::LuauState;
-use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Watchdog};
+use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Trc, Watchdog};
 
 pub struct RobloxVM {
-    main_state: RwLock<LuauState>,
-    states: Vec<Option<RwLock<LuauState>>>,
+    main_state: Trc<LuauState>,
+    states: Vec<Trc<LuauState>>,
     instances: InstanceReplicationTable,
     instances_tag_collection: InstanceTagCollectionTable,
     flags: MaybeUninit<FastFlags>,
+    data_model: MaybeUninit<ManagedInstance>,
 
-    states_locks: HashMap<*mut LuauState, *const RwLock<LuauState>>,
+    states_locks: HashMap<*mut LuauState, *const Trc<LuauState>>,
     
     hard_wd: Watchdog,
     soft_wd: Watchdog,
@@ -54,18 +56,21 @@ impl RobloxVM {
     pub fn new(flags_table: Option<Vec<(FastFlag, FastFlagValue)>>) -> Box<RwLock<RobloxVM>> {
         unsafe {
             let mut vm = Box::new(RwLock::new(RobloxVM {
-                main_state: RwLock::new(LuauState::new_uninit()),
+                main_state: Trc::new(LuauState::new_uninit()),
                 states: Vec::new(),
                 states_locks: HashMap::new(),
                 instances: InstanceReplicationTable::default(),
                 instances_tag_collection: InstanceTagCollectionTable::default(),
+                data_model: MaybeUninit::uninit(),
                 hard_wd: Watchdog::new_timeout(10.0),
                 soft_wd: Watchdog::new_timeout(1.0/60.0),
                 _pin: PhantomPinned::default(),
                 flags: MaybeUninit::uninit()
             }));
             let vm_ptr = &raw mut *vm;
-            vm.get_mut().flags.write(FastFlags::new(vm_ptr));
+            let flags = FastFlags::new(vm_ptr);
+            vm.get_mut().data_model.write(DataModel::new(&flags));
+            vm.get_mut().flags.write(flags);
             if let Some(table) = flags_table {
                 vm.get_mut().flags.assume_init_mut()
                     .initialize_with_table(table);
@@ -74,7 +79,7 @@ impl RobloxVM {
             let main_state_lock_ptr = &raw const vm.get_mut().main_state;
             vm.get_mut().states_locks.insert(main_state_ptr, main_state_lock_ptr);
 
-            vm.get_mut().main_state.get_mut().init(vm_ptr, Box::new(GlobalTaskScheduler::new()));
+            vm.get_mut().main_state.access().as_mut().unwrap_unchecked().init(vm_ptr, Box::new(GlobalTaskScheduler::new()));
             godot_print!("RobloxVM instance created.");
             vm
         }
@@ -107,7 +112,7 @@ impl RobloxVM {
     pub fn get_main_state(&mut self) -> &mut LuauState {
         unsafe { &mut *self.main_state.access() }
     }
-    pub(super) fn get_state_with_rwlock(&self, ptr: *mut LuauState) -> Option<*const RwLock<LuauState>> {
+    pub(super) fn get_state_with_rwlock(&self, ptr: *mut LuauState) -> Option<*const Trc<LuauState>> {
         self.states_locks.get(&ptr).map(|x| *x)
     }
     unsafe fn watchdog_trip_state(state: *mut LuauState) {
@@ -124,9 +129,7 @@ impl RobloxVM {
         unsafe { 
             Self::watchdog_trip_state(self.main_state.access());
             for i in self.states.iter() {
-                i.as_ref().map(|x| {
-                    Self::watchdog_trip_state(x.access());
-                });
+                Self::watchdog_trip_state(i.access());
             }
         }
     }
@@ -134,9 +137,7 @@ impl RobloxVM {
         if self.hard_wd.check() {
             Self::watchdog_reset_state(unsafe { self.main_state.access().as_mut().unwrap_unchecked() });
             for i in self.states.iter() {
-                i.as_ref().map(|x| {
-                    Self::watchdog_reset_state(x.write().unwrap().borrow_mut());
-                });
+                Self::watchdog_reset_state(i.write().borrow_mut());
             }
         }
         self.hard_wd.reset();
@@ -155,6 +156,10 @@ impl RobloxVM {
     #[inline(always)]
     pub(crate) const fn flags(&self) -> &FastFlags {
         unsafe { self.flags.assume_init_ref() }
+    }
+    #[inline(always)]
+    pub fn get_game_instance(&self) -> ManagedInstance {
+        unsafe { self.data_model.assume_init_ref().clone() }
     }
 }
 

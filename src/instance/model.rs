@@ -69,7 +69,7 @@ impl IInstance for Model {
     fn lua_set(&self, lua: &Lua, name: String, val: LuaValue) -> LuaResult<()> {
         self.get_model_component_mut().lua_set(self, lua, &name, &val)
             .or_else(|| self.get_pv_instance_component_mut().lua_set(self, lua, &name, &val))
-            .unwrap_or_else(|| self.get_instance_component_mut().lua_set(lua, &name, &val))
+            .unwrap_or_else(|| self.get_instance_component_mut().lua_set(lua, &name, val))
     }
     fn clone_instance(&self) -> LuaResult<ManagedInstance> {
         Ok(Irc::new_cyclic_fallable::<_, LuaError>(|x| {
@@ -101,7 +101,7 @@ impl IModel for Model {
 }
 
 impl IInstanceComponent for ModelComponent {
-    fn lua_get(self: &mut RwLockReadGuard<'_, ModelComponent>, _: &DynInstance, lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
+    fn lua_get(self: &mut RwLockReadGuard<'_, ModelComponent>, _: &DynInstance, _lua: &Lua, key: &String) -> Option<LuaResult<LuaValue>> {
         match key.as_str() {
             "LevelOfDetail" => todo!(),
             "ModelStreamingMode" => todo!(),
@@ -111,7 +111,7 @@ impl IInstanceComponent for ModelComponent {
         }
     }
 
-    fn lua_set(self: &mut RwLockWriteGuard<'_, ModelComponent>, _: &DynInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
+    fn lua_set(self: &mut RwLockWriteGuard<'_, ModelComponent>, _: &DynInstance, _lua: &Lua, key: &String, _value: &LuaValue) -> Option<LuaResult<()>> {
         match key.as_str() {
             "LevelOfDetail" => todo!(),
             "ModelStreamingMode" => todo!(),

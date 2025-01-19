@@ -9,6 +9,7 @@ print(i)
 i.Name = "ParentInstance"
 child.Name = "ChildInstance"
 print(i)
+print(game)
 
 i.ChildAdded:Connect(function(i) print("ChildAdded", i) end)
 i.ChildRemoved:Connect(function(i) print("ChildRemoved", i) end)
