@@ -1,4 +1,5 @@
-#[proc_macro_derive(Instance)]
+#[proc_macro_derive(Instance, attributes(instance, field))]
 pub fn instance_derive(ts: TokenStream) -> TokenStream {
-    TokenStream::new()
+    let origin: syn::DeriveInput = syn::parse_macro_input!(ts.into());
+    todo!()
 }
