@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, future::Future, mem::take, pin::P
 
 use mlua::prelude::*;
 use super::from_lua_clone_impl;
-use crate::core::{get_state, get_state_with_rwlock, get_task_scheduler_from_lua, FastFlag, LuauState, ParallelDispatch, RwLock, Trc, TrcReadLock, TrcWriteLock, Weak};
+use crate::core::{get_state, get_state_with_rwlock, get_task_scheduler_from_lua, FastFlag, LuauState, ParallelDispatch, Trc, TrcReadLock, TrcWriteLock, Weak};
 pub type ManagedRBXScriptSignal = Trc<RBXScriptSignal>;
 
 #[derive(Debug, Clone)]

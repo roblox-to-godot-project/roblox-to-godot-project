@@ -1,3 +1,5 @@
 [gd_scene format=3 uid="uid://g0eyndavpqug"]
 
 [node name="Node" type="Node"]
+
+[node name="RobloxVM" type="RobloxVM" parent="."]

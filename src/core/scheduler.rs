@@ -1,7 +1,7 @@
 use std::mem::take;
 
 use mlua::{ffi::{self, lua_resume, lua_settop, lua_tothread}, prelude::*};
-use super::get_state;
+use super::{get_state, RobloxVM, RwLockWriteGuard};
 
 #[derive(Debug)]
 pub struct TaskScheduler {
@@ -40,7 +40,7 @@ impl TaskScheduler {
     pub fn as_dyn_mut(&mut self) -> &mut dyn ITaskScheduler {
         unsafe { &mut *((&raw mut *self) as *mut dyn ITaskScheduler) }
     }
-    pub const fn new() -> TaskScheduler {
+    pub(crate) const fn new() -> TaskScheduler {
         TaskScheduler {
             defer_threads: [Vec::new(),Vec::new()],
             delay_threads: [Vec::new(),Vec::new()],
@@ -138,7 +138,7 @@ impl dyn ITaskScheduler {
         self.get_task_scheduler_mut().delay_threads[parallel].push((thread.clone(), 0, Self::clock() + seconds));
         Ok(thread)
     }
-    pub fn defer_single_cycle(&mut self, lua: &Lua, parallel: bool) -> LuaResult<bool> {
+    pub fn defer_single_cycle<'a>(&mut self, lua: &'a Lua, parallel: bool) -> LuaResult<bool> {
         self.get_task_scheduler_mut().parallel_dispatch = parallel;
         let threads = take(&mut self.get_task_scheduler_mut().defer_threads[parallel as usize]);
         for (thread, args) in threads { unsafe {
@@ -153,7 +153,7 @@ impl dyn ITaskScheduler {
         }}
         Ok(!self.get_task_scheduler_mut().defer_threads[parallel as usize].is_empty())
     }
-    pub fn delay_single_cycle(&mut self, lua: &Lua, parallel: bool) -> LuaResult<bool> {
+    pub fn delay_single_cycle<'a>(&mut self, lua: &'a Lua, parallel: bool) -> LuaResult<bool> {
         self.get_task_scheduler_mut().parallel_dispatch = parallel;
         let threads = take(&mut self.get_task_scheduler_mut().delay_threads[parallel as usize]);
         let new_threads  = &mut self.get_task_scheduler_mut().delay_threads[parallel as usize];
@@ -178,7 +178,7 @@ impl dyn ITaskScheduler {
     fn watchdog_check(&self, lua: &Lua) -> bool {
         unsafe { get_state(lua).watchdog_check() }
     }
-    pub fn defer_cycle(&mut self, lua: &Lua, parallel: bool) -> LuaResult<()> {
+    pub fn defer_cycle<'a>(&mut self, lua: &'a Lua, parallel: bool) -> LuaResult<()> {
         while self.defer_single_cycle(lua, parallel)? && !self.watchdog_check(lua) {}
         Ok(())
     }
@@ -192,6 +192,7 @@ impl dyn ITaskScheduler {
 }
 
 #[derive(Debug, Default)]
+#[repr(transparent)]
 pub struct GlobalTaskScheduler {
     task: TaskScheduler
 }
@@ -202,13 +203,27 @@ impl GlobalTaskScheduler {
     pub fn as_dyn_mut(&mut self) -> &mut dyn ITaskScheduler {
         unsafe { &mut *((&raw mut self.task) as *mut dyn ITaskScheduler) }
     }
-    pub const fn new() -> GlobalTaskScheduler {
+    pub fn frame_step(mut vm: RwLockWriteGuard<RobloxVM>, _: f64) -> LuaResult<()> {
+        
+        // SAFETY: This function avoids the borrow checker since the main state outlives global task scheduler.
+        let main_state_ptr = &raw mut *vm.get_main_state();
+        let main_state = unsafe {main_state_ptr.as_mut().unwrap_unchecked()};
+
+        let lua = main_state.get_lua().clone();
+        let task = main_state.get_task_scheduler_mut();
+        task.get_task_scheduler_mut().parallel_dispatch = false;
+        vm.watchdog_reset();
+        task.defer_cycle(&lua, false)?;
+        task.delay_cycle(&lua, false)?;
+        // todo! run service events
+        drop(vm);
+        Ok(())
+    }
+    pub fn new() -> GlobalTaskScheduler {
         GlobalTaskScheduler {
             task: TaskScheduler::new()
         }
     }
-
-    
 }
 impl ITaskScheduler for GlobalTaskScheduler {
     fn get_task_scheduler(&self) -> &TaskScheduler {

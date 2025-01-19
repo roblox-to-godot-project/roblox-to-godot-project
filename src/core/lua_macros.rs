@@ -24,6 +24,26 @@ macro_rules! lua_getter {
     (function_async, $lua: ident, $func: expr) => {
         Ok(mlua::Value::Function($lua.create_async_function($func)?))
     };
+    (function_opt, $lua: ident, $func: expr) => {
+        Some({
+            let f = $lua.create_function($func);
+            if let Ok(f) = f {
+                Ok(mlua::Value::Function(f))
+            } else {
+                return Some(Err(f.err().unwrap()));
+            }
+        })
+    };
+    (function_async_opt, $lua: ident, $func: expr) => {
+        Some({
+            let f = $lua.create_async_function($func);
+            if let Ok(f) = f {
+                Ok(mlua::Value::Function(f))
+            } else {
+                return Some(Err(f.err().unwrap()));
+            }
+        })
+    };
 }
 macro_rules! lua_invalid_argument {
     ($func_name: literal, $pos: expr, $arg_name: ident, $err: expr) => {
@@ -63,7 +83,7 @@ macro_rules! lua_invalid_argument {
             to: Some($func_name.into()),
             pos: $pos,
             name: Some(stringify!($arg_name).into()),
-            cause: Arc::new(LuaError::FromLuaConversionError {
+            cause: std::sync::Arc::new(LuaError::FromLuaConversionError {
                 from: stringify!($from),
                 to: stringify!($to).into(),
                 message: None

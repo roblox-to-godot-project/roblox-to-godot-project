@@ -78,6 +78,7 @@ impl LuauState {
             vm.read().unwrap().log_warn(args);
             Ok(())
         }).unwrap()).unwrap();
+        self.lua.globals().raw_set("game", self.vm.as_ref().unwrap_unchecked().read().unwrap().get_game_instance()).unwrap();
         self.lua.sandbox(true).unwrap();
         self.lua.enable_jit(false);
         register_userdata_singletons(&mut self.lua).unwrap();
@@ -125,8 +126,8 @@ impl LuauState {
     }
 
     // Mutable borrow is forced here to prevent modifying the lua state with a read-only borrow.
-    pub fn get_lua(&mut self) -> &mut Lua {
-        &mut self.lua
+    pub fn get_lua(&mut self) -> &Lua {
+        &self.lua
     }
     pub fn get_userdata_types() -> &'static [&'static str] {
         /*&[

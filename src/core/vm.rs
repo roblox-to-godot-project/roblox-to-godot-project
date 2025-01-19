@@ -9,6 +9,7 @@ use godot::{builtin::Variant, global::{godot_print, print_rich, printt}, meta::T
 use mlua::prelude::*;
 
 use crate::core::scheduler::GlobalTaskScheduler;
+use crate::instance::{DataModel, ManagedInstance};
 
 use super::state::LuauState;
 use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Trc, Watchdog};
@@ -19,6 +20,7 @@ pub struct RobloxVM {
     instances: InstanceReplicationTable,
     instances_tag_collection: InstanceTagCollectionTable,
     flags: MaybeUninit<FastFlags>,
+    data_model: MaybeUninit<ManagedInstance>,
 
     states_locks: HashMap<*mut LuauState, *const Trc<LuauState>>,
     
@@ -59,13 +61,16 @@ impl RobloxVM {
                 states_locks: HashMap::new(),
                 instances: InstanceReplicationTable::default(),
                 instances_tag_collection: InstanceTagCollectionTable::default(),
+                data_model: MaybeUninit::uninit(),
                 hard_wd: Watchdog::new_timeout(10.0),
                 soft_wd: Watchdog::new_timeout(1.0/60.0),
                 _pin: PhantomPinned::default(),
                 flags: MaybeUninit::uninit()
             }));
             let vm_ptr = &raw mut *vm;
-            vm.get_mut().flags.write(FastFlags::new(vm_ptr));
+            let flags = FastFlags::new(vm_ptr);
+            vm.get_mut().data_model.write(DataModel::new(&flags));
+            vm.get_mut().flags.write(flags);
             if let Some(table) = flags_table {
                 vm.get_mut().flags.assume_init_mut()
                     .initialize_with_table(table);
@@ -151,6 +156,10 @@ impl RobloxVM {
     #[inline(always)]
     pub(crate) const fn flags(&self) -> &FastFlags {
         unsafe { self.flags.assume_init_ref() }
+    }
+    #[inline(always)]
+    pub fn get_game_instance(&self) -> ManagedInstance {
+        unsafe { self.data_model.assume_init_ref().clone() }
     }
 }
 

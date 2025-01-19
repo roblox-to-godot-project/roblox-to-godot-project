@@ -517,7 +517,7 @@ impl IInstanceComponent for InstanceComponent {
     }
 
     fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, _: &DynInstance, lua: &Lua, key: &String, value: &LuaValue) -> Option<LuaResult<()>> {
-        Some(InstanceComponent::lua_set(self, lua, key, value))
+        Some(InstanceComponent::lua_set(self, lua, key, value.clone()))
     }
 
     fn new(ptr: WeakManagedInstance, class_name: &'static str) -> Self {
@@ -771,18 +771,18 @@ impl InstanceComponent {
         }
     }
 
-    pub fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, lua: &Lua, key: &String, value: &LuaValue) -> LuaResult<()> {
+    pub fn lua_set(self: &mut RwLockWriteGuard<'_, Self>, lua: &Lua, key: &String, value: LuaValue) -> LuaResult<()> {
         match key.as_str() {
             "Archivable" => {
                 self.archivable = value.as_boolean().ok_or(LuaError::RuntimeError("bad argument to setting Archivable".into()))?;
-                Self::emit_property_changed(self, lua, "Archivable", value)
+                Self::emit_property_changed(self, lua, "Archivable", &value)
             },
             "Name" => {
                 self.name = value.as_string_lossy().ok_or(LuaError::RuntimeError("bad argument to setting Name".into()))?;
-                Self::emit_property_changed(self, lua, "Name", value)
+                Self::emit_property_changed(self, lua, "Name", &value)
             },
             "Parent" => {
-                DynInstance::guard_set_parent(self, lua, FromLua::from_lua(value.clone(), lua)?)
+                DynInstance::guard_set_parent(self, lua, FromLua::from_lua(value, lua)?)
             },
             _ => Err(LuaError::RuntimeError(format!("can't set property {} on object of type Instance",key.as_str())))
         }
