@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use crate::core::InheritanceBase;
 use crate::userdata::ManagedRBXScriptSignal;

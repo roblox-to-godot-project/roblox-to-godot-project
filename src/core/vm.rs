@@ -6,7 +6,7 @@ use std::marker::PhantomPinned;
 
 use godot::global::godot_print_rich;
 use godot::{builtin::Variant, global::{godot_print, print_rich, printt}, meta::ToGodot};
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use crate::core::scheduler::GlobalTaskScheduler;
 use crate::instance::{DataModel, ManagedInstance};

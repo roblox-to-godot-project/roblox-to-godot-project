@@ -2,7 +2,7 @@ use std::mem::take;
 use std::ops::{Add, Mul, Sub};
 use std::sync::Arc;
 
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use super::{enums::RotationOrder, LuaSingleton, Vector3};
 

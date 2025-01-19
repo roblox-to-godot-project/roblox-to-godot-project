@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use crate::core::FastFlags;
 use crate::core::{get_state, inheritance_cast_to, FastFlag, InheritanceBase, InheritanceTable, InheritanceTableBuilder, Irc, 

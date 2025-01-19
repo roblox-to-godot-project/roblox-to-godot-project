@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use crate::core::lua_macros::lua_getter;
 use crate::core::{get_state, get_state_with_rwlock, FastFlag, InheritanceBase, InheritanceTable, InheritanceTableBuilder, Irc, LuauState, RwLock, RwLockReadGuard, RwLockWriteGuard, Trc};

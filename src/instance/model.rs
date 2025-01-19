@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use super::instance::IInstanceComponent;
 use super::pvinstance::IPVInstance;

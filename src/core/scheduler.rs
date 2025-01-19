@@ -1,6 +1,6 @@
 use std::mem::take;
 
-use mlua::{ffi::{self, lua_resume, lua_settop, lua_tothread}, prelude::*};
+use r2g_mlua::{ffi::{self, lua_resume, lua_settop, lua_tothread}, prelude::*};
 use super::{get_state, RobloxVM, RwLockWriteGuard};
 
 #[derive(Debug)]

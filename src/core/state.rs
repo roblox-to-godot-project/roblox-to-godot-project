@@ -3,7 +3,7 @@ use std::{collections::HashMap, ffi::c_void, mem::transmute, ptr::addr_of_mut};
 use std::ptr::null_mut;
 
 use godot::global::godot_print;
-use mlua::{prelude::*, ChunkMode, Compiler};
+use r2g_mlua::{prelude::*, ChunkMode, Compiler};
 use super::scheduler::ITaskScheduler;
 use super::{FastFlag, FastFlags, RwLock, RwLockReadGuard, RwLockWriteGuard, TaskScheduler, Trc};
 use super::{security::ThreadIdentityType, vm::RobloxVM};
