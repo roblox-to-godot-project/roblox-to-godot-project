@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-use mlua::ffi::lua_clock;
+use r2g_mlua::ffi::lua_clock;
 
 #[derive(Debug)]
 pub struct Watchdog {

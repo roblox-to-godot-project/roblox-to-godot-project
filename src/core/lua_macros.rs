@@ -19,16 +19,16 @@ macro_rules! lua_getter {
         IntoLua::into_lua($prop.as_ref().map(|x| x.upgrade()).flatten(), $lua)
     };
     (function, $lua: ident, $func: expr) => {
-        Ok(mlua::Value::Function($lua.create_function($func)?))
+        Ok(r2g_mlua::Value::Function($lua.create_function($func)?))
     };
     (function_async, $lua: ident, $func: expr) => {
-        Ok(mlua::Value::Function($lua.create_async_function($func)?))
+        Ok(r2g_mlua::Value::Function($lua.create_async_function($func)?))
     };
     (function_opt, $lua: ident, $func: expr) => {
         Some({
             let f = $lua.create_function($func);
             if let Ok(f) = f {
-                Ok(mlua::Value::Function(f))
+                Ok(r2g_mlua::Value::Function(f))
             } else {
                 return Some(Err(f.err().unwrap()));
             }
@@ -38,7 +38,7 @@ macro_rules! lua_getter {
         Some({
             let f = $lua.create_async_function($func);
             if let Ok(f) = f {
-                Ok(mlua::Value::Function(f))
+                Ok(r2g_mlua::Value::Function(f))
             } else {
                 return Some(Err(f.err().unwrap()));
             }

@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use crate::core::{inheritance_cast_to, lua_macros::lua_invalid_argument, RwLockReadGuard, RwLockWriteGuard};
 use crate::userdata::CFrame;

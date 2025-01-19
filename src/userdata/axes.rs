@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use super::{enums::NormalId, LuaSingleton};
 

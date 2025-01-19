@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Axis {

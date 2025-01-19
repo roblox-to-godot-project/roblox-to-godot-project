@@ -6,7 +6,7 @@ use std::mem::swap;
 use std::ops::Deref;
 use std::ptr::NonNull;
 
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use crate::core::alloc::Allocator;
 use crate::core::lua_macros::lua_getter;

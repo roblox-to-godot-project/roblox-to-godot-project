@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ModelStreamingMode {

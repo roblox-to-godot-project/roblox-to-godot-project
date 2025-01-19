@@ -1,4 +1,4 @@
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 pub trait LuaSingleton {
     #[allow(unused_variables)]

@@ -2,7 +2,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 
 use godot::builtin::math::FloatExt;
-use mlua::prelude::*;
+use r2g_mlua::prelude::*;
 
 use super::enums::{Axis, NormalId};
 use super::LuaSingleton;
