@@ -1,6 +1,6 @@
 [package]
 name = "roblox-to-godot-project"
-version = "0.0.1-indev"
+version = "0.1.0-indev"
 edition = "2021"
 authors = ["Radiant"]
 license = "Apache-2.0"
