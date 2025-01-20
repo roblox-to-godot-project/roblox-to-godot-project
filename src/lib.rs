@@ -81,13 +81,15 @@ unsafe impl ExtensionLibrary for RobloxToGodotProjectExtension {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[roblox_to_godot_project_derive::instance(hierarchy=[ServiceProvider], no_clone, parent_locked)]
+// struct TestInstance {
+//     #[property(name = "meow", readonly)]
+//     meow: u32,
+//     a_field: String,
+//     #[method(name = "regret")]
+//     fn why_did_i_do_this() {
 
-    #[test]
-    fn it_works() {
-        let result = 2+2;
-        assert_eq!(result, 4);
-    }
-}
+//     },
+//     #[property(name = "owo", readonly)]
+//     another_field: String,
+// }
