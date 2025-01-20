@@ -1,5 +1,5 @@
 use proc_macro2::Span;
-use syn::{braced, bracketed, meta::ParseNestedMeta, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, token::{self, Brace, Bracket, Comma, Eq, Paren, Semi, Struct}, Attribute, Error, Field, Fields, Generics, Ident, ImplItemFn, LitBool, LitStr, Result, Token, Visibility, WhereClause};
+use syn::{braced, bracketed, meta::ParseNestedMeta, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, token::{self, Brace, Bracket, Comma, Eq, Paren, Semi, Struct}, Attribute, Error, Field, Fields, Generics, Ident, ImplItemFn, LitBool, LitStr, Result, Signature, Token, Visibility, WhereClause};
 
 #[derive(Debug)]
 pub enum SecurityContext {
@@ -20,18 +20,107 @@ pub struct LuaPropertyData {
 
 #[derive(Debug)]
 pub struct LuaFunctionData {
-    pub name: String,
+    pub lua_name: String,
     pub virt: bool,
     pub security_context: SecurityContext,
     pub asyn: bool,
+
+    pub sig: Signature
+}
+
+pub fn parse_lua_fn_attr(attr: Attribute) -> Result<LuaFunctionData> {
+    let (
+        mut lua_name,
+        mut virt,
+        mut security_context,
+        mut asyn,
+        mut sig
+    ): (
+        Option<String>,
+        Option<bool>,
+        Option<SecurityContext>,
+        Option<bool>,
+        Option<Signature>
+    ) = (
+        None,
+        None,
+        None,
+        None,
+        None
+    );
+
+    attr.parse_nested_meta(|pnm| {
+        let ident = match pnm.path.get_ident() {
+            Some(s) => s,
+            None => {
+                return Err(pnm.error("bad option name"))
+            }
+        };
+
+        let ident = ident.to_string();
+
+        match ident.as_str() {
+            "func" => {
+                if sig.is_some() { return Err(pnm.error("`func` specified twice or more")) }
+                sig = Some(pnm.value()?.parse::<Signature>()?);
+            },
+            "name" => {
+                if lua_name.is_some() { return Err(pnm.error("`name` specified twice or more")) }
+                lua_name = Some(pnm.value()?.parse::<LitStr>()?.value());
+            },
+            "virtual" => {
+                if virt.is_some() { return Err(pnm.error("`virtual` specified twice or more")) }
+                virt = Some(match pnm.value() { Ok(s) => s.parse::<LitBool>()?.value(), Err(_) => true });
+            },
+            "async" => {
+                if asyn.is_some() { return Err(pnm.error("`async` specified twice or more")) }
+                asyn = Some(match pnm.value() { Ok(s) => s.parse::<LitBool>()?.value(), Err(_) => true });
+            },
+            "security_context" => {
+                if security_context.is_some() { return Err(pnm.error("`security_context` specified twice or more")) }
+                let value: Ident = pnm.value()?.parse()?;
+
+                let ident = value.to_string();
+                match ident.as_str() {
+                    "None" => {
+                        security_context = Some(SecurityContext::None);
+                    },
+                    "PluginSecurity" => {
+                        security_context = Some(SecurityContext::PluginSecurity);
+                    },
+                    "LocalUserSecurity" => {
+                        security_context = Some(SecurityContext::LocalUserSecurity);
+                    },
+                    "RobloxScriptSecurity" => {
+                        security_context = Some(SecurityContext::RobloxScriptSecurity);
+                    },
+                    _ => {
+                        return Err(pnm.error("unknown secuirty context"));
+                    }
+                }
+            }
+            _ => {
+                return Err(pnm.error("bad option name"))
+            }
+        }
+        Ok(())
+    })?;
+    
+    Ok(
+        LuaFunctionData {
+            lua_name: match lua_name { Some(s) => s, None => return Err(Error::new(attr.span(), "`name` is required, but was not given")) },
+            virt: virt.unwrap_or(false),
+            security_context: security_context.unwrap_or(SecurityContext::None),
+            asyn: asyn.unwrap_or(false),
+            sig: match sig { Some(s) => s, None => return Err(Error::new(attr.span(), "`func` is required, but was not given")) },
+        }
+    )
 }
 
 #[derive(Debug)]
 pub enum InstanceContent {
     RustField { rust_field: Field },
     LuaField { lua_field: LuaPropertyData, rust_field: Field },
-    RustFunction { rust_function: ImplItemFn },
-    LuaFunction { lua_function: LuaFunctionData, rust_function: ImplItemFn }
 }
 
 #[derive(Debug)]
@@ -99,6 +188,7 @@ impl Parse for InstanceConfigAttr {
     }
 }
 
+#[derive(Debug)]
 pub struct InstanceConfig {
     pub no_clone: bool,
     pub parent_locked: bool,
@@ -126,116 +216,6 @@ impl Parse for Instance {
             contents,
             semi_token,
         })
-    }
-}
-
-fn search_attrs_fn(mut func: ImplItemFn) -> Result<InstanceContent> {
-    let mut filtered: Vec<(usize, &Attribute)> = func.attrs.iter().enumerate().filter(|(_, a)| a.path().is_ident("method")).collect();
-
-    if filtered.is_empty() {
-        return Ok(InstanceContent::RustFunction { rust_function: func })
-    }
-
-    if filtered.len() != 1 {
-        return Err(Error::new(func.span(), format!("`instance`: expected 1 `method` specifier, got {}", filtered.len())))
-    } else {
-        let (idx, attr) = filtered.pop().unwrap();
-
-        let (mut name,
-            mut virt,
-            mut security_context,
-            mut asyn): (Option<String>, Option<bool>, Option<SecurityContext>, Option<bool>) = (None, None, None, None);
-
-        if let Err(e) = attr.parse_nested_meta(|nested_meta| {
-            let ident = nested_meta.path.require_ident()?;
-            let ident = ident.to_string();
-
-            match ident.as_str() {
-                "name" => {
-                    if name.is_none() {
-                        let nname: LitStr = nested_meta.value()?.parse()?;
-                        let nname = nname.value();
-                        if nname.is_empty() {
-                            return Err(nested_meta.error("field name cannot be empty"));
-                        }
-                        name = Some(nname);
-                    } else {
-                        return Err(nested_meta.error("already specified"));
-                    }
-                },
-                "virtual" => {
-                    if let None = virt {
-                        if let Ok(ts) = nested_meta.value() {
-                            let b: LitBool = ts.parse()?;
-                            virt = Some(b.value());
-                        } else {
-                            virt = Some(true);
-                        }
-                    } else {
-                        return Err(nested_meta.error("already specified"));
-                    }
-                },
-                "async" => {
-                    if let None = asyn {
-                        if let Ok(ts) = nested_meta.value() {
-                            let b: LitBool = ts.parse()?;
-                            asyn = Some(b.value());
-                        } else {
-                            asyn = Some(true);
-                        }
-                    } else {
-                        return Err(nested_meta.error("already specified"));
-                    }
-                },
-                "security_context" => {
-                    if let None = security_context {
-                        let value: Ident = nested_meta.value()?.parse()?;
-
-                        let ident = value.to_string();
-
-                        match ident.as_str() {
-                            "None" => {
-                                security_context = Some(SecurityContext::None);
-                            },
-                            "PluginSecurity" => {
-                                security_context = Some(SecurityContext::PluginSecurity);
-                            },
-                            "LocalUserSecurity" => {
-                                security_context = Some(SecurityContext::LocalUserSecurity);
-                            },
-                            "RobloxScriptSecurity" => {
-                                security_context = Some(SecurityContext::RobloxScriptSecurity);
-                            },
-                            _ => {
-                                return Err(nested_meta.error("unknown secuirty context"));
-                            }
-                        }
-                    } else {
-                        return Err(nested_meta.error("already specified"));
-                    }
-                },
-                _ => {
-                    return Err(nested_meta.error("unknown attribute"));
-                }
-            }
-            Ok(())
-        }) {
-            return Err(e)
-        };
-        
-        let lfa = LuaFunctionData {
-            name: match name {
-                Some(s) => s,
-                None => return Err(Error::new(attr.span(), "name must be specified")),
-            },
-            security_context: security_context.unwrap_or(SecurityContext::None),
-            virt: virt.unwrap_or(false),
-            asyn: asyn.unwrap_or(false),
-        };
-
-        func.attrs.remove(idx);
-
-        return Ok(InstanceContent::LuaFunction { lua_function: lfa, rust_function: func })
     }
 }
 
@@ -359,21 +339,8 @@ fn search_attrs_field(mut field: Field) -> Result<InstanceContent> {
 
 impl Parse for InstanceContent {
     fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork(); // Create a fork of the input stream
-        
-        // Try parsing as function first without consuming tokens
-        if fork.parse::<ImplItemFn>().is_ok() {
-            // If it would succeed, now do the real parse
-            let iifn = input.parse::<ImplItemFn>()?;
-            return Ok(search_attrs_fn(iifn)?);
-        }
-        
-        // If not a function, try as field
-        if let Ok(field) = input.call(Field::parse_named) {
-            return Ok(search_attrs_field(field)?);
-        }
-        
-        Err(input.error("unknown struct field/method, you can only have functions and fields"))
+        let field = input.call(Field::parse_named)?;
+        return Ok(search_attrs_field(field)?);
     }
 }
 
