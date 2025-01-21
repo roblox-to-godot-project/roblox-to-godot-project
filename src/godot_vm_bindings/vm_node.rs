@@ -6,6 +6,8 @@ use godot::{classes::Engine, global::Error, prelude::*};
 use crate::core::{get_state, FastFlag, FastFlagValue, GlobalTaskScheduler, ParallelDispatch::Synchronized, RobloxVM, RwLock};
 
 /// The RobloxVM node, holding either a client or a server state, depending on the startup flags.
+/// 
+/// [b]Note:[/b] This object is not thread-safe. It should from only a single thread.
 #[derive(GodotClass)]
 #[class(base=Node,rename=RobloxVM)]
 pub struct RobloxVMNode {

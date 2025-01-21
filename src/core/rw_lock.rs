@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::mem::MaybeUninit;
@@ -13,7 +14,7 @@ use parking_lot::lock_api::RawRwLock as IRawRwLock;
 use parking_lot::RawRwLock;
 
 thread_local! {
-    static GLOBAL_LOCKS_OF_THREAD: Vec<Arc<AtomicBool>> = Vec::new();
+    pub(super) static GLOBAL_LOCKS_OF_THREAD: RefCell<Vec<Arc<AtomicBool>>> = RefCell::default();
 }
 
 pub struct RwLock<T: ?Sized> {
@@ -135,7 +136,7 @@ impl<T> RwLock<T> {
             lock: RawRwLock::INIT,
             poisoned: AtomicBool::new(false),
             data: UnsafeCell::new(value),
-            global_lock: GLOBAL_LOCKS_OF_THREAD.with(|x| 
+            global_lock: GLOBAL_LOCKS_OF_THREAD.with_borrow(|x|
                 x.last().map(|x| &raw const *x.as_ref()).unwrap_or(null())
             )
         }
@@ -145,7 +146,7 @@ impl<T> RwLock<T> {
             lock: RawRwLock::INIT,
             data: UnsafeCell::new(MaybeUninit::uninit()),
             poisoned: AtomicBool::new(false),
-            global_lock: GLOBAL_LOCKS_OF_THREAD.with(|x|
+            global_lock: GLOBAL_LOCKS_OF_THREAD.with_borrow(|x|
                 x.last().map(|x| &raw const *x.as_ref()).unwrap_or(null())
             )
         }

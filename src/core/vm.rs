@@ -15,7 +15,7 @@ use crate::core::scheduler::GlobalTaskScheduler;
 use crate::instance::{DataModel, ManagedInstance};
 
 use super::state::LuauState;
-use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Trc, Watchdog};
+use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Trc, Watchdog, GLOBAL_LOCKS_OF_THREAD};
 
 pub struct RobloxVM {
     main_state: Trc<LuauState>,
@@ -176,6 +176,14 @@ impl RobloxVM {
     #[inline(always)]
     pub unsafe fn set_global_lock_state(&mut self, state: bool) {
         self.global_lock.store(state, Relaxed);
+    }
+    #[inline(always)]
+    pub(crate) fn push_global_lock_atomic(&self) {
+        GLOBAL_LOCKS_OF_THREAD.with_borrow_mut(|x| x.push(self.global_lock.clone()));
+    }
+    #[inline(always)]
+    pub(crate) fn pop_global_lock_atomic(&self) {
+        GLOBAL_LOCKS_OF_THREAD.with_borrow_mut(|x| x.pop().unwrap());
     }
 }
 
