@@ -234,6 +234,8 @@ impl FastFlags {
     }
     #[inline(always)]
     const fn get_flag_internal(&self, flag: FastFlag) -> &FlagInternal {
+        // SAFETY: For every fast flag, there is an element inside the slice.
+        // The size of the slice is equal to the number of variants in FastFlag.
         unsafe { 
             self.flags.get()
                 .as_ref().unwrap_unchecked()
