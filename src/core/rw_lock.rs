@@ -8,8 +8,13 @@ use std::ops::DerefMut;
 use std::ptr::null;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 use parking_lot::lock_api::RawRwLock as IRawRwLock;
 use parking_lot::RawRwLock;
+
+thread_local! {
+    static GLOBAL_LOCKS_OF_THREAD: Vec<Arc<AtomicBool>> = Vec::new();
+}
 
 pub struct RwLock<T: ?Sized> {
     lock: RawRwLock,
@@ -109,6 +114,42 @@ impl<T> RwLock<T> {
             global_lock: null()
         }
     }
+    pub fn new_with_flag(value: T, global_lock: *const AtomicBool) -> Self {
+        RwLock {
+            lock: RawRwLock::INIT,
+            poisoned: AtomicBool::new(false),
+            data: UnsafeCell::new(value),
+            global_lock
+        }
+    }
+    pub fn new_uninit_with_flag(global_lock: *const AtomicBool) -> RwLock<MaybeUninit<T>> {
+        RwLock {
+            lock: RawRwLock::INIT,
+            data: UnsafeCell::new(MaybeUninit::uninit()),
+            poisoned: AtomicBool::new(false),
+            global_lock
+        }
+    }
+    pub fn new_with_flag_auto(value: T) -> Self {
+        RwLock {
+            lock: RawRwLock::INIT,
+            poisoned: AtomicBool::new(false),
+            data: UnsafeCell::new(value),
+            global_lock: GLOBAL_LOCKS_OF_THREAD.with(|x| 
+                x.last().map(|x| &raw const *x.as_ref()).unwrap_or(null())
+            )
+        }
+    }
+    pub fn new_uninit_with_flag_auto() -> RwLock<MaybeUninit<T>> {
+        RwLock {
+            lock: RawRwLock::INIT,
+            data: UnsafeCell::new(MaybeUninit::uninit()),
+            poisoned: AtomicBool::new(false),
+            global_lock: GLOBAL_LOCKS_OF_THREAD.with(|x|
+                x.last().map(|x| &raw const *x.as_ref()).unwrap_or(null())
+            )
+        }
+    }
     pub fn into_inner(self) -> T {
         self.data.into_inner()
     }
@@ -188,6 +229,10 @@ impl<T: ?Sized> RwLock<T> {
     #[inline(always)]
     pub fn clear_poison(&self) {
         self.poisoned.store(false, Relaxed);
+    }
+    #[inline(always)]
+    pub unsafe fn set_global_lock(&mut self, global_lock: *const AtomicBool) {
+        self.global_lock = global_lock;
     }
 }
 

@@ -262,32 +262,32 @@ impl FastFlags {
     pub fn set_string(&self, flag: FastFlag, v: String) {
         unsafe {
             assert!(!self.vm.as_ref().unwrap_unchecked()
-                .access().as_mut().unwrap_unchecked()
-                .get_main_state().get_task_scheduler().is_desynchronized());
+                .access().as_ref().unwrap_unchecked()
+                .get_global_lock_state());
         }
         self.get_flag_mut_internal(flag).set_string(flag, v)
     }
     pub fn set_int(&self, flag: FastFlag, v: i64) {
         unsafe {
             assert!(!self.vm.as_ref().unwrap_unchecked()
-                .access().as_mut().unwrap_unchecked()
-                .get_main_state().get_task_scheduler().is_desynchronized());
+                .access().as_ref().unwrap_unchecked()
+                .get_global_lock_state());
         }
         self.get_flag_mut_internal(flag).set_int(flag, v)
     }
     pub fn set_float(&self, flag: FastFlag, v: f64) {
         unsafe {
             assert!(!self.vm.as_ref().unwrap_unchecked()
-                .access().as_mut().unwrap_unchecked()
-                .get_main_state().get_task_scheduler().is_desynchronized());
+                .access().as_ref().unwrap_unchecked()
+                .get_global_lock_state());
         }
         self.get_flag_mut_internal(flag).set_float(flag, v)
     }
     pub fn set_bool(&self, flag: FastFlag, v: bool) {
         unsafe {
             assert!(!self.vm.as_ref().unwrap_unchecked()
-                .access().as_mut().unwrap_unchecked()
-                .get_main_state().get_task_scheduler().is_desynchronized());
+                .access().as_ref().unwrap_unchecked()
+                .get_global_lock_state());
         }
         self.get_flag_mut_internal(flag).set_bool(flag, v)
     }

@@ -1,6 +1,9 @@
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 use std::thread::panicking;
 use std::marker::PhantomPinned;
 
@@ -21,6 +24,7 @@ pub struct RobloxVM {
     instances_tag_collection: InstanceTagCollectionTable,
     flags: MaybeUninit<FastFlags>,
     data_model: MaybeUninit<ManagedInstance>,
+    global_lock: Arc<AtomicBool>,
 
     states_locks: HashMap<*mut LuauState, *const Trc<LuauState>>,
     
@@ -59,6 +63,7 @@ impl RobloxVM {
                 main_state: Trc::new(LuauState::new_uninit()),
                 states: Vec::new(),
                 states_locks: HashMap::new(),
+                global_lock: Arc::new(AtomicBool::new(true)),
                 instances: InstanceReplicationTable::default(),
                 instances_tag_collection: InstanceTagCollectionTable::default(),
                 data_model: MaybeUninit::uninit(),
@@ -67,6 +72,7 @@ impl RobloxVM {
                 _pin: PhantomPinned::default(),
                 flags: MaybeUninit::uninit()
             }));
+            vm.set_global_lock(vm.access().as_ref().unwrap().global_lock.as_ref());
             let vm_ptr = &raw mut *vm;
             let flags = FastFlags::new(vm_ptr);
             vm.get_mut().data_model.write(DataModel::new(&flags));
@@ -160,6 +166,16 @@ impl RobloxVM {
     #[inline(always)]
     pub fn get_game_instance(&self) -> ManagedInstance {
         unsafe { self.data_model.assume_init_ref().clone() }
+    }
+    /// SAFETY: Always allowed, even from .access(). Guaranteed thread-safe
+    #[inline(always)]
+    pub fn get_global_lock_state(&self) -> bool {
+        self.global_lock.load(Relaxed)
+    }
+    /// SAFETY: Modifying the global lock changes the behavior of all RwLocks. Do not modify unless you know what you're doing.
+    #[inline(always)]
+    pub unsafe fn set_global_lock_state(&mut self, state: bool) {
+        self.global_lock.store(state, Relaxed);
     }
 }
 
