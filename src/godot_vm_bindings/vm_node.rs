@@ -11,7 +11,7 @@ use crate::core::{get_state, FastFlag, FastFlagValue, GlobalTaskScheduler, Paral
 pub struct RobloxVMNode {
     vm: Option<Box<RwLock<RobloxVM>>>,
     /// The fast flags loaded on startup.
-    /// [b]Note:[/b] This is only loaded on startup! At runtime, you have to use the [method set_fast_flag] and [method get_fast_flag] methods.
+    /// [b]Note:[/b] This is only loaded on startup! At runtime, you have to use the [method set_fast_flag_async] and [method get_fast_flag] methods.
     #[export]
     startup_flags: Dictionary,
 
