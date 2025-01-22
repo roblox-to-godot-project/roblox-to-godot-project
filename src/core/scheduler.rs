@@ -211,11 +211,14 @@ impl GlobalTaskScheduler {
 
         let lua = main_state.get_lua().clone();
         let task = main_state.get_task_scheduler_mut();
-        task.get_task_scheduler_mut().parallel_dispatch = false;
+        unsafe { vm.set_global_lock_state(false) };
+        vm.push_global_lock_atomic();
         vm.watchdog_reset();
         task.defer_cycle(&lua, false)?;
         task.delay_cycle(&lua, false)?;
         // todo! run service events
+        vm.pop_global_lock_atomic();
+        unsafe { vm.set_global_lock_state(true) };
         drop(vm);
         Ok(())
     }

@@ -6,6 +6,8 @@ use godot::{classes::Engine, global::Error, prelude::*};
 use crate::core::{get_state, FastFlag, FastFlagValue, GlobalTaskScheduler, ParallelDispatch::Synchronized, RobloxVM, RwLock};
 
 /// The RobloxVM node, holding either a client or a server state, depending on the startup flags.
+/// 
+/// [b]Note:[/b] This object is not thread-safe. It should from only a single thread.
 #[derive(GodotClass)]
 #[class(base=Node,rename=RobloxVM)]
 pub struct RobloxVMNode {
@@ -161,5 +163,26 @@ impl RobloxVMNode {
                 Err(Variant::nil())
             }
         })().unwrap_or_else(|e| e)
+    }
+    /// Pushes Lua code to the task scheduler and runs it on the next deferred cycle.
+    #[func]
+    fn push_code(&mut self, chunk: GString) -> Error {
+        self.vm.as_mut().map(|vm| {
+            let mut write = vm.write()
+                .inspect_err(|_| godot_error!("RobloxVMNode: failed to acquire write lock on RobloxVM"))
+                .map_err(|_| Error::ERR_CANT_ACQUIRE_RESOURCE)
+                .unwrap();
+            let state = write.get_main_state();
+            let env = state.create_env_from_global().unwrap();
+            let func = state.compile_jit("<godot>", chunk.to_string().as_str(), env).unwrap();
+            let lua = unsafe {(&raw const *state.get_lua()).as_ref().unwrap_unchecked()};
+            unsafe {
+                (&raw mut *state).as_mut().unwrap_unchecked()
+            }.get_task_scheduler_mut()
+                .defer_func(lua, func, (), Synchronized)
+                .inspect_err(|_| godot_error!("RobloxVMNode: failed to defer on task scheduler"))
+                .unwrap();
+        });
+        Error::OK
     }
 }
