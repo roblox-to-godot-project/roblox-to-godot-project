@@ -92,3 +92,27 @@ struct TestInstance {
     #[property(name = "owo", readonly)]
     another_field: String,
 }
+
+#[methods]
+impl TestInstance {
+    fn some_func() {}
+    fn another_func(s: String) -> usize { s.len() }
+}
+
+// impl crate::instance::IInstanceComponent for TestInstanceComponent {
+//     fn lua_get(self: &mut core::RwLockReadGuard<'_, Self>, ptr: &instance::DynInstance, lua: &r2g_mlua::Lua, key: &String) -> Option<r2g_mlua::Result<r2g_mlua::Value>> {
+//         todo!()
+//     }
+
+//     fn lua_set(self: &mut core::RwLockWriteGuard<'_, Self>, ptr: &instance::DynInstance, lua: &r2g_mlua::Lua, key: &String, value: &r2g_mlua::Value) -> Option<r2g_mlua::Result<()>> {
+//         todo!()
+//     }
+
+//     fn clone(self: &core::RwLockReadGuard<'_, Self>, new_ptr: &instance::WeakManagedInstance) -> r2g_mlua::Result<Self> {
+//         todo!()
+//     }
+
+//     fn new(ptr: instance::WeakManagedInstance, class_name: &'static str) -> Self {
+//         todo!()
+//     }
+// }

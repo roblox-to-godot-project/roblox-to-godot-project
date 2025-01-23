@@ -16,6 +16,7 @@ pub struct LuaPropertyData {
     pub get: Option<String>,
     pub set: Option<String>,
     pub security_context: SecurityContext,
+    pub default: Option<syn::Expr>
 }
 
 #[derive(Debug)]
@@ -143,7 +144,7 @@ pub struct Instance {
 pub enum InstanceConfigAttr {
     NoClone(bool, Option<Eq>, Span),
     ParentLocked(bool, Option<Eq>, Span),
-    Hierarchy(Eq, Bracket, Punctuated<Ident, Token![,]>, Span),
+    Hierarchy(Eq, Bracket, Punctuated<syn::Path, Token![,]>, Span),
     CustomNew(bool, Option<Eq>, Span)
 }
 
@@ -177,7 +178,7 @@ impl Parse for InstanceConfigAttr {
                 let content;
                 let brackets = bracketed!(content in input);
                 
-                let punct: Punctuated<Ident, Token![,]> = Punctuated::parse_terminated(&content)?;
+                let punct: Punctuated<syn::Path, Token![,]> = Punctuated::parse_terminated(&content)?;
 
                 return Ok(InstanceConfigAttr::Hierarchy(equals, brackets, punct, ident.span()))
             },
@@ -192,7 +193,7 @@ impl Parse for InstanceConfigAttr {
 pub struct InstanceConfig {
     pub no_clone: bool,
     pub parent_locked: bool,
-    pub hierarchy: Vec<Ident>,
+    pub hierarchy: Vec<syn::Path>,
     pub custom_new: bool
 }
 
@@ -230,7 +231,7 @@ fn search_attrs_field(mut field: Field) -> Result<InstanceContent> {
         return Err(Error::new(field.span(), format!("`instance`: expected 1 `property` specifier, got {}", filtered.len())))
     } else {
         let (idx, attr) = filtered.pop().unwrap();
-        let (mut name, mut readonly, mut get, mut set, mut security_context) = (None, None, None, None, None);
+        let (mut name, mut readonly, mut get, mut set, mut security_context, mut default) = (None, None, None, None, None, None);
         if let Err(e) = attr.parse_nested_meta(|nested_meta| {
             let ident = nested_meta.path.require_ident()?;
             let ident = ident.to_string();
@@ -244,6 +245,15 @@ fn search_attrs_field(mut field: Field) -> Result<InstanceContent> {
                             return Err(nested_meta.error("field name cannot be empty"));
                         }
                         name = Some(nname);
+                    } else {
+                        return Err(nested_meta.error("already specified"));
+                    }
+                },
+                "default" => {
+                    if default.is_none() {
+                        let expr: syn::Expr = nested_meta.value()?.parse()?;
+
+                        default = Some(expr)
                     } else {
                         return Err(nested_meta.error("already specified"));
                     }
@@ -329,6 +339,7 @@ fn search_attrs_field(mut field: Field) -> Result<InstanceContent> {
             get,
             set,
             security_context: security_context.unwrap_or(SecurityContext::None),
+            default
         };
 
         field.attrs.remove(idx);

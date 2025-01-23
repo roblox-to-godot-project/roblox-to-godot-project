@@ -24,7 +24,7 @@ pub fn instance(item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> p
     // convert punct to conf
     let mut no_clone = None;
     let mut parent_locked = None;
-    let mut hierarchy: Option<Vec<Ident>> = None;
+    let mut hierarchy: Option<Vec<syn::Path>> = None;
     let mut custom_new = None;
 
     for ca in item {
@@ -110,8 +110,30 @@ pub fn instance(item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> p
 
     let (cgn, cgmn) = (Ident::new(&component_get_name, ident.span()), Ident::new(&component_get_mut_name, ident.span()));
 
-    let inherited: Vec<Ident> = ic.hierarchy.into_iter().into_iter().map(|i| {
-        Ident::new(&("I".to_owned()+&i.to_string()), i.span())
+    let inherited_names: Vec<LitStr> = ic.hierarchy.iter().map(|i| {
+        LitStr::new(&i.require_ident().unwrap().to_string(), i.span())
+    }).collect();
+
+    let inherited: Vec<syn::Path> = ic.hierarchy.into_iter().into_iter().map(|i| {
+        syn::Path {
+            leading_colon: i.leading_colon,
+            segments: {
+                let mut punct: Punctuated<PathSegment, Token![::]> = Punctuated::new();
+
+                let len = i.segments.len();
+
+                for (i, mut element) in i.segments.into_iter().enumerate() {
+                    if i < len - 1 {
+                        punct.push(element);
+                    } else {
+                        element.ident = Ident::new(&("I".to_owned() + &element.ident.to_string()), element.ident.span());
+                        punct.push(element);
+                    }
+                }
+
+                punct
+            },
+        }
     }).collect();
 
     let s = LitStr::new(&ident.to_string(), ident.span());
@@ -125,6 +147,12 @@ pub fn instance(item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> p
             #(#rust_fields),*
         }
 
+        impl crate::instance::IInstanceComponent for #component_name {
+            fn new(_ptr: instance::WeakManagedInstance, _class_name: &'static str) -> Self {
+                todo!()
+            }
+        }
+        
         trait #trait_name {
             fn #cgn(&self) -> crate::core::RwLockReadGuard<'_, #component_name>;
             fn #cgmn(&self) -> crate::core::RwLockWriteGuard<'_, #component_name>;
@@ -136,7 +164,7 @@ pub fn instance(item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> p
             // all elements in hierarchy
             service_provider: crate::core::RwLock<crate::instance::ServiceProviderComponent>,
             // self
-            #snake_id: crate::core::RwLock<#component_name>
+            #snake_id: crate::core::RwLock<#component_name>,
         }
 
         impl crate::core::InheritanceBase for #ident {
@@ -152,16 +180,26 @@ pub fn instance(item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> p
 
         impl crate::instance::IObject for #ident {
             fn is_a(&self, class_name: &String) -> bool {
-                todo!()
+                match class_name.as_str() {
+                    "DataModel" => true,
+                    //"ServiceProvider" => true,
+                    "Instance" => true,
+                    "Object" => true,
+                    #(#inherited_names => true),*
+                    #s => true,
+                    _ => false
+                }
             }
             fn lua_get(&self, lua: &r2g_mlua::Lua, name: String) -> r2g_mlua::prelude::LuaResult<r2g_mlua::prelude::LuaValue> {
-                todo!()
+                
             }
-            fn get_changed_signal(&self) -> use crate::userdata::ManagedRBXScriptSignal {
-                self.#cgn().changed.clone()
+            fn get_changed_signal(&self) -> crate::userdata::ManagedRBXScriptSignal {
+                use crate::instance::IInstance;
+                self.get_instance_component().changed.clone()
             }
-            fn get_property_changed_signal(&self, property: String) -> use crate::userdata::ManagedRBXScriptSignal {
-                self.#cgn().get_property_changed_signal(property).unwrap()
+            fn get_property_changed_signal(&self, property: String) -> crate::userdata::ManagedRBXScriptSignal {
+                use crate::instance::IInstance;
+                self.get_instance_component().get_property_changed_signal(property).unwrap()
             }
             fn get_class_name(&self) -> &'static str { #s }
         }
@@ -174,6 +212,14 @@ pub fn instance(item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> p
             fn #cgmn(&self) -> crate::core::RwLockWriteGuard<'_, #component_name> {
                 self.#snake_id.write().unwrap()
             }
+        }
+
+        impl crate::instance::IInstance for #ident {
+
+        }
+
+        impl crate::instance::IServiceProvider for #ident {
+
         }
     }.into_token_stream().into()
 }
