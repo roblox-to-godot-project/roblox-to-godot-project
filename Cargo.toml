@@ -1,6 +1,6 @@
 [package]
 name = "roblox-to-godot-project"
-authors = ["Radiant"]
+authors = ["Radiant", "roblox-to-godot-project contributors"]
 description = "Roblox To Godot Project, allowing you to run Roblox games inside Godot"
 license = "Apache-2.0"
 readme = "README.md"
