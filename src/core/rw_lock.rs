@@ -249,6 +249,26 @@ impl<T: ?Sized> RwLock<T> {
     pub unsafe fn set_global_lock(&mut self, global_lock: *const AtomicBool) {
         self.global_lock = global_lock;
     }
+    #[inline(always)]
+    pub unsafe fn lock_shared(&mut self) {
+        self.lock.lock_shared();
+    }
+    #[inline(always)]
+    pub unsafe fn lock_exclusive(&mut self) {
+        self.lock.lock_exclusive();
+    }
+    #[inline(always)]
+    pub unsafe fn unlock_shared(&mut self) {
+        self.lock.unlock_shared();
+    }
+    #[inline(always)]
+    pub unsafe fn unlock_exclusive(&mut self) {
+        self.lock.lock_shared();
+
+        if std::thread::panicking() {
+            self.poisoned.store(true, Relaxed);
+        }
+    }
 }
 
 impl<'a, T: ?Sized> RwLockReadGuard<'a, T> {
@@ -273,14 +293,14 @@ impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
 impl<'a, 'b, T: ?Sized> Drop for RwLockReadReleaseGuard<'a, 'b, T> {
     fn drop(&mut self) {
         if self.guard.holds_lock {
-            self.guard.lock.lock.lock_shared();
+            unsafe { self.guard.lock.lock_shared() };
         }
     }
 }
 impl<'a, 'b, T: ?Sized> Drop for RwLockWriteReleaseGuard<'a, 'b, T> {
     fn drop(&mut self) {
         if self.guard.holds_lock {
-            self.guard.lock.lock.lock_exclusive();
+            unsafe { self.guard.lock.lock_exclusive() };
         }
     }
 }
@@ -288,14 +308,14 @@ impl<'a, 'b, T: ?Sized> Drop for RwLockWriteReleaseGuard<'a, 'b, T> {
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
     fn drop(&mut self) {
         if self.holds_lock {
-            unsafe { self.lock.lock.unlock_shared() };
+            unsafe { self.lock.unlock_shared() };
         }
     }
 }
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
         if self.holds_lock {
-            unsafe { self.lock.lock.unlock_exclusive() };
+            unsafe { self.lock.unlock_exclusive() };
         }
     }
 }
