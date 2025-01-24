@@ -250,11 +250,11 @@ impl<T: ?Sized> RwLock<T> {
         self.global_lock = global_lock;
     }
     #[inline(always)]
-    pub fn lock_shared(&mut self) {
+    pub unsafe fn lock_shared(&mut self) {
         self.lock.lock_shared();
     }
     #[inline(always)]
-    pub fn lock_exclusive(&mut self) {
+    pub unsafe fn lock_exclusive(&mut self) {
         self.lock.lock_exclusive();
     }
     #[inline(always)]
@@ -293,14 +293,14 @@ impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
 impl<'a, 'b, T: ?Sized> Drop for RwLockReadReleaseGuard<'a, 'b, T> {
     fn drop(&mut self) {
         if self.guard.holds_lock {
-            self.guard.lock.lock_shared();
+            unsafe { self.guard.lock.lock_shared() };
         }
     }
 }
 impl<'a, 'b, T: ?Sized> Drop for RwLockWriteReleaseGuard<'a, 'b, T> {
     fn drop(&mut self) {
         if self.guard.holds_lock {
-            self.guard.lock.lock_exclusive();
+            unsafe { self.guard.lock.lock_exclusive() };
         }
     }
 }
