@@ -177,31 +177,28 @@ impl<T: ?Sized> RwLock<T> {
     pub fn read<'a>(&'a self) -> LockResult<RwLockReadGuard<'a, T>> {
         let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
 
+        if holds_lock {
+            self.lock.lock_shared();
+        }
+
         let rw_lock_read_guard = RwLockReadGuard {
             lock: self,
             holds_lock
         };
 
-        if self.poisoned.load(Relaxed) { return Err(PoisonError { guard: rw_lock_read_guard }); }
-
-        if holds_lock {
-            self.lock.lock_shared();
-        }
-        Ok(rw_lock_read_guard)
+        if self.poisoned.load(Relaxed) { Err(PoisonError { guard: rw_lock_read_guard }) } else { Ok(rw_lock_read_guard) }
     }
     #[inline]
     pub fn try_read<'a>(&'a self) -> TryLockResult<RwLockReadGuard<'a, T>> {
         let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
 
-        let rw_lock_read_guard = RwLockReadGuard {
-            lock: self,
-            holds_lock
-        };
-
-        if self.poisoned.load(Relaxed) { return Err(TryLockError::Poisoned(PoisonError { guard: rw_lock_read_guard })); }
-
         if !holds_lock || self.lock.try_lock_shared() {
-            Ok(rw_lock_read_guard)
+            let rw_lock_read_guard = RwLockReadGuard {
+                lock: self,
+                holds_lock
+            };
+
+            if self.poisoned.load(Relaxed) { Err(TryLockError::Poisoned(PoisonError { guard: rw_lock_read_guard })) } else { Ok(rw_lock_read_guard) }
         } else {
             Err(TryLockError::WouldBlock)
         }
@@ -210,31 +207,28 @@ impl<T: ?Sized> RwLock<T> {
     pub fn write<'a>(&'a self) -> LockResult<RwLockWriteGuard<'a, T>> {
         let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
 
+        if holds_lock {
+            self.lock.lock_exclusive();
+        }
+
         let rw_lock_write_guard = RwLockWriteGuard {
             lock: self,
             holds_lock
         };
 
-        if self.poisoned.load(Relaxed) { return Err(PoisonError { guard: rw_lock_write_guard }); }
-
-        if holds_lock {
-            self.lock.lock_exclusive();
-        }
-        Ok(rw_lock_write_guard)
+        if self.poisoned.load(Relaxed) { Err(PoisonError { guard: rw_lock_write_guard }) } else { Ok(rw_lock_write_guard) }
     }
     #[inline]
     pub fn try_write<'a>(&'a self) -> TryLockResult<RwLockWriteGuard<'a, T>> {
         let holds_lock = unsafe { self.global_lock.as_ref().map_or(true, |x| x.load(Relaxed)) };
 
-        let rw_lock_write_guard = RwLockWriteGuard {
-            lock: self,
-            holds_lock
-        };
-
-        if self.poisoned.load(Relaxed) { return Err(TryLockError::Poisoned(PoisonError { guard: rw_lock_write_guard })); }
-
         if !holds_lock || self.lock.try_lock_exclusive() {
-            Ok(rw_lock_write_guard)
+            let rw_lock_write_guard = RwLockWriteGuard {
+                lock: self,
+                holds_lock
+            };
+
+            if self.poisoned.load(Relaxed) { Err(TryLockError::Poisoned(PoisonError { guard: rw_lock_write_guard })) } else { Ok(rw_lock_write_guard) }
         } else {
             Err(TryLockError::WouldBlock)
         }
