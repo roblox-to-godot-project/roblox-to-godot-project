@@ -26,6 +26,7 @@ pub enum FastFlag {
     GlobalsReadonly,          // bool
     IsClient,                 // bool
     IsStudio,                 // bool
+    DebugMode,                // bool
 
     SignalBehavior            // int
 }
@@ -73,7 +74,8 @@ impl FlagInternal {
             FastFlag::VSync |
             FastFlag::GlobalsReadonly |
             FastFlag::IsClient |
-            FastFlag::IsStudio => unsafe { self.bool_value },
+            FastFlag::IsStudio |
+            FastFlag::DebugMode => unsafe { self.bool_value },
             _ => panic!("Invalid flag")
         }
     }
@@ -117,7 +119,8 @@ impl FlagInternal {
             FastFlag::VSync |
             FastFlag::GlobalsReadonly |
             FastFlag::IsClient |
-            FastFlag::IsStudio => self.bool_value = v,
+            FastFlag::IsStudio |
+            FastFlag::DebugMode => self.bool_value = v,
             _ => panic!("Invalid flag")
         }
     }
@@ -139,6 +142,7 @@ impl FlagInternal {
             FastFlag::VSync |
             FastFlag::GlobalsReadonly |
             FastFlag::IsClient |
+            FastFlag::DebugMode |
             FastFlag::IsStudio => unsafe { FastFlagValue::Bool(self.bool_value) }
         }
     }
@@ -165,6 +169,7 @@ impl FastFlag {
             Self::GlobalsReadonly => FlagInternal { bool_value: false },
             Self::IsClient => FlagInternal { bool_value: true },
             Self::IsStudio => FlagInternal { bool_value: false },
+            Self::DebugMode => FlagInternal { bool_value: true },
             
             Self::SignalBehavior => FlagInternal { int_value: 0 }
         }

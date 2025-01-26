@@ -85,7 +85,7 @@ impl IInstance for DataModel {
             .unwrap_or_else(|| self.instance.write().unwrap().lua_set(lua, &name, val))
     }
 
-    fn clone_instance(&self) -> LuaResult<ManagedInstance> {
+    fn clone_instance(&self, _: &Lua) -> LuaResult<ManagedInstance> {
         Err(LuaError::RuntimeError("DataModel cannot be cloned".into()))
     }
 }
@@ -168,7 +168,7 @@ impl IInstanceComponent for DataModelComponent {
         }
     }
 
-    fn clone(self: &RwLockReadGuard<'_, Self>, _new_ptr: &WeakManagedInstance) -> LuaResult<Self> {
+    fn clone(self: &RwLockReadGuard<'_, Self>, _: &Lua, _: &WeakManagedInstance) -> LuaResult<Self> {
         Err(LuaError::RuntimeError("Cannot clone DataModelComponent".into()))
     }
 
