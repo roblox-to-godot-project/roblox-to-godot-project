@@ -15,11 +15,11 @@ use crate::core::scheduler::GlobalTaskScheduler;
 use crate::instance::{DataModel, ManagedInstance};
 
 use super::state::LuauState;
-use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Trc, Watchdog, GLOBAL_LOCKS_OF_THREAD};
+use super::{FastFlag, FastFlagValue, FastFlags, InstanceReplicationTable, InstanceTagCollectionTable, RwLock, Trc, Watchdog, Weak, GLOBAL_LOCKS_OF_THREAD};
 
 pub struct RobloxVM {
     main_state: Trc<LuauState>,
-    states: Vec<Trc<LuauState>>,
+    states: Vec<Weak<LuauState>>,
     instances: InstanceReplicationTable,
     instances_tag_collection: InstanceTagCollectionTable,
     flags: MaybeUninit<FastFlags>,
@@ -134,7 +134,11 @@ impl RobloxVM {
         // SAFETY: Luau permits setting interrupt from other threads.
         unsafe { 
             Self::watchdog_trip_state(self.main_state.access());
-            for i in self.states.iter() {
+            for i in self.states.iter()
+                .map(|x| x.upgrade())
+                .filter(|x| x.is_some())
+                .map(|x| x.unwrap()) 
+            {
                 Self::watchdog_trip_state(i.access());
             }
         }
@@ -142,7 +146,11 @@ impl RobloxVM {
     pub fn watchdog_reset(&mut self) {
         if self.hard_wd.check() {
             Self::watchdog_reset_state(unsafe { self.main_state.access().as_mut().unwrap_unchecked() });
-            for i in self.states.iter() {
+            for i in self.states.iter()
+            .map(|x| x.upgrade())
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap()) 
+            {
                 Self::watchdog_reset_state(i.write().borrow_mut());
             }
         }
@@ -184,6 +192,26 @@ impl RobloxVM {
     #[inline(always)]
     pub(crate) fn pop_global_lock_atomic(&self) {
         GLOBAL_LOCKS_OF_THREAD.with_borrow_mut(|x| x.pop().unwrap());
+    }
+    pub(crate) fn create_sub_state(&mut self) -> Trc<LuauState> {
+        let self_rwlock = unsafe {
+            self.main_state.access().as_ref().unwrap_unchecked().get_vm_ptr()
+        };
+        let state = LuauState::new(self_rwlock);
+        let rc = Trc::new(state);
+        self.states.push(rc.downgrade());
+        rc
+    }
+    pub fn get_main_state_rc(&self) -> Trc<LuauState> {
+        self.main_state.clone()
+    }
+    pub fn get_all_states(&self) -> Vec<Trc<LuauState>> {
+        self.states.iter()
+            .map(|x| x.upgrade())
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .chain(std::iter::once(self.main_state.clone()))
+            .collect()
     }
 }
 

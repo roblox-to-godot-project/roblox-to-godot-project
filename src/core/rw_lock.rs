@@ -250,20 +250,20 @@ impl<T: ?Sized> RwLock<T> {
         self.global_lock = global_lock;
     }
     #[inline(always)]
-    pub unsafe fn lock_shared(&mut self) {
+    pub unsafe fn lock_shared(&self) {
         self.lock.lock_shared();
     }
     #[inline(always)]
-    pub unsafe fn lock_exclusive(&mut self) {
+    pub unsafe fn lock_exclusive(&self) {
         self.lock.lock_exclusive();
     }
     #[inline(always)]
-    pub unsafe fn unlock_shared(&mut self) {
+    pub unsafe fn unlock_shared(&self) {
         self.lock.unlock_shared();
     }
     #[inline(always)]
-    pub unsafe fn unlock_exclusive(&mut self) {
-        self.lock.lock_shared();
+    pub unsafe fn unlock_exclusive(&self) {
+        self.lock.unlock_exclusive  ();
 
         if std::thread::panicking() {
             self.poisoned.store(true, Relaxed);

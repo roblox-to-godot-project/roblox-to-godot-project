@@ -3,7 +3,7 @@ use std::{collections::HashMap, mem::transmute};
 use bevy_reflect::Typed;
 use godot::{classes::Engine, global::Error, prelude::*};
 
-use crate::core::{get_state, FastFlag, FastFlagValue, GlobalTaskScheduler, ParallelDispatch::Synchronized, RobloxVM, RwLock};
+use crate::core::{borrowck_ignore_mut, get_state, FastFlag, FastFlagValue, GlobalTaskScheduler, ParallelDispatch::Synchronized, RobloxVM, RwLock, ThreadIdentity, ThreadIdentityType};
 
 /// The RobloxVM node, holding either a client or a server state, depending on the startup flags.
 /// 
@@ -176,12 +176,14 @@ impl RobloxVMNode {
             let env = state.create_env_from_global().unwrap();
             let func = state.compile_jit("<godot>", chunk.to_string().as_str(), env).unwrap();
             let lua = unsafe {(&raw const *state.get_lua()).as_ref().unwrap_unchecked()};
-            unsafe {
-                (&raw mut *state).as_mut().unwrap_unchecked()
-            }.get_task_scheduler_mut()
+            let thr = unsafe { borrowck_ignore_mut(state) }.get_task_scheduler_mut()
                 .defer_func(lua, func, (), Synchronized)
                 .inspect_err(|_| godot_error!("RobloxVMNode: failed to defer on task scheduler"))
                 .unwrap();
+            state.set_thread_identity(thr, ThreadIdentity {
+                security_identity: ThreadIdentityType::UserInit,
+                script: None
+            });
         });
         Error::OK
     }

@@ -117,7 +117,7 @@ impl IInstance for RunService {
     fn lua_set(&self, lua: &Lua, name: String, val: LuaValue) -> LuaResult<()> {
         self.instance_component.write().unwrap().lua_set(lua, &name, val)
     }
-    fn clone_instance(&self) -> LuaResult<ManagedInstance> {
+    fn clone_instance(&self, _: &Lua) -> LuaResult<ManagedInstance> {
         Err(LuaError::RuntimeError("Cannot clone RunService.".into()))
     }
 }
